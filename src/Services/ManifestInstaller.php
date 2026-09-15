@@ -46,7 +46,11 @@ class ManifestInstaller
 
         // 2. Publish standalone runner if registered
         if ($definition->runnerPath !== null && $this->files->exists($definition->runnerPath)) {
-            $runnerName = basename($definition->runnerPath);
+            $runnerFilename = basename($definition->runnerPath);
+            $runnerName = str_ends_with($runnerFilename, '.stub')
+                ? substr($runnerFilename, 0, -5)
+                : $runnerFilename;
+
             $targetRunnerPath = $rootPath.DIRECTORY_SEPARATOR.$runnerName;
 
             if ($this->files->exists($targetRunnerPath) && ! $force) {
@@ -56,7 +60,14 @@ class ManifestInstaller
                     'message' => "Standalone runner [./{$runnerName}] already exists.",
                 ];
             } else {
-                $this->files->copy($definition->runnerPath, $targetRunnerPath);
+                $content = $this->files->get($definition->runnerPath);
+                $compiled = str_replace(
+                    ['{{ manifestPath }}', '{{ runnerName }}'],
+                    [$definition->filename, $runnerName],
+                    $content
+                );
+
+                $this->files->put($targetRunnerPath, $compiled);
                 @chmod($targetRunnerPath, 0755);
 
                 $steps[] = [

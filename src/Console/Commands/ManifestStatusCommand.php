@@ -53,7 +53,11 @@ class ManifestStatusCommand extends Command
 
             $runnerDisplay = '—';
             if ($def->runnerPath !== null) {
-                $runnerName = basename($def->runnerPath);
+                $runnerFilename = basename($def->runnerPath);
+                $runnerName = str_ends_with($runnerFilename, '.stub')
+                    ? substr($runnerFilename, 0, -5)
+                    : $runnerFilename;
+
                 $hasRunner = $this->files->exists($rootPath.DIRECTORY_SEPARATOR.$runnerName);
                 $runnerDisplay = $hasRunner ? "<info>✔ ./{$runnerName}</info>" : "<comment>missing (./{$runnerName})</comment>";
             }
