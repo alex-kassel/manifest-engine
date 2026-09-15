@@ -12,7 +12,12 @@ class ManifestRegistry
     /**
      * @var array<string, ManifestDefinition>
      */
-    protected array $manifests = [];
+    public const EMPTY_REGISTRY = [];
+
+    /**
+     * @var array<string, ManifestDefinition>
+     */
+    protected array $manifests = self::EMPTY_REGISTRY;
 
     /**
      * Register a new manifest definition.
@@ -68,7 +73,7 @@ class ManifestRegistry
      */
     public function clear(): self
     {
-        $this->manifests = [];
+        $this->manifests = self::EMPTY_REGISTRY;
 
         return $this;
     }

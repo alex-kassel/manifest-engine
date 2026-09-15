@@ -19,6 +19,35 @@ use JsonException;
 
 class Manifest
 {
+    public const JSON_ENCODE_FLAGS = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES;
+
+    public const JSON_DECODE_DEPTH = 512;
+
+    public const DEFAULT_TRANSLATOR_LOCALE = 'en';
+
+    public const DEFAULT_STAT_SIZE = 0;
+
+    public const DEFAULT_EMPTY_CONTENT = '';
+
+    /**
+     * @var array<string, mixed>
+     */
+    public const DEFAULT_EMPTY_DATA = [];
+
+    /**
+     * @var array<int, mixed>
+     */
+    public const DEFAULT_APPEND_EMPTY_ARRAY = [];
+
+    public const TEMP_FILE_PREFIX = '.tmp.';
+
+    /**
+     * In-memory cache of loaded manifest data.
+     *
+     * @var array<string, mixed>|null
+     */
+    protected ?array $data = null;
+
     protected ?ValidationFactory $validatorFactory = null;
 
     public function __construct(
@@ -67,7 +96,7 @@ class Manifest
         }
 
         $loader = new ArrayLoader;
-        $translator = new Translator($loader, 'en');
+        $translator = new Translator($loader, self::DEFAULT_TRANSLATOR_LOCALE);
 
         return $this->validatorFactory = new Factory($translator);
     }
@@ -111,7 +140,7 @@ class Manifest
     public function init(): self
     {
         if (! $this->exists()) {
-            $initialData = $this->schema !== null ? $this->schema->defaults() : [];
+            $initialData = $this->schema !== null ? $this->schema->defaults() : self::DEFAULT_EMPTY_DATA;
             $this->save($initialData);
         }
 
@@ -119,30 +148,73 @@ class Manifest
     }
 
     /**
-     * Load manifest content as an array.
+     * Invalidate in-memory cache and re-read fresh data from disk.
+     */
+    public function fresh(): self
+    {
+        $this->data = null;
+        $this->load(forceFresh: true);
+
+        return $this;
+    }
+
+    /**
+     * Alias for fresh().
+     */
+    public function reload(): self
+    {
+        return $this->fresh();
+    }
+
+    /**
+     * Load manifest content as an array with concurrency shared lock protection.
      *
      * @return array<string, mixed>
      *
      * @throws ManifestNotFoundException
      * @throws ManifestException
      */
-    public function load(): array
+    public function load(bool $forceFresh = false): array
     {
+        if (! $forceFresh && $this->data !== null) {
+            return $this->data;
+        }
+
         if (! $this->exists()) {
             if ($this->schema !== null) {
-                return $this->schema->defaults();
+                return $this->data = $this->schema->defaults();
             }
 
             throw new ManifestNotFoundException($this->path);
         }
 
-        $content = (string) $this->files->get($this->path);
-        if (trim($content) === '') {
-            return $this->schema !== null ? $this->schema->defaults() : [];
+        $fp = fopen($this->path, 'r');
+        if (! $fp) {
+            throw new ManifestException("Failed to open manifest file [{$this->path}] for reading.");
         }
 
         try {
-            $data = json_decode($content, true, 512, JSON_THROW_ON_ERROR);
+            if (! flock($fp, LOCK_SH)) {
+                throw new ManifestException("Failed to acquire shared lock on manifest [{$this->path}].");
+            }
+
+            $stat = fstat($fp);
+            $size = is_array($stat) && isset($stat['size']) ? (int) $stat['size'] : self::DEFAULT_STAT_SIZE;
+            $content = $size > self::DEFAULT_STAT_SIZE ? (string) fread($fp, $size) : self::DEFAULT_EMPTY_CONTENT;
+        } finally {
+            flock($fp, LOCK_UN);
+            fclose($fp);
+        }
+
+        if (trim($content) === self::DEFAULT_EMPTY_CONTENT) {
+            $data = $this->schema !== null ? $this->schema->defaults() : self::DEFAULT_EMPTY_DATA;
+
+            return $this->data = $data;
+        }
+
+        try {
+            /** @var array<string, mixed> $data */
+            $data = json_decode($content, true, self::JSON_DECODE_DEPTH, JSON_THROW_ON_ERROR);
         } catch (JsonException $e) {
             throw new ManifestException("Malformed JSON in manifest [{$this->path}]: {$e->getMessage()}", 0, $e);
         }
@@ -151,7 +223,7 @@ class Manifest
             $this->validate($data);
         }
 
-        return $data;
+        return $this->data = $data;
     }
 
     /**
@@ -167,13 +239,34 @@ class Manifest
             $this->validate($data);
         }
 
-        $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        $json = json_encode($data, self::JSON_ENCODE_FLAGS);
         if ($json === false) {
             throw new ManifestException("Failed to serialize manifest JSON for [{$this->path}].");
         }
 
-        $this->files->ensureDirectoryExists(dirname($this->path));
-        $this->files->put($this->path, $json."\n", true);
+        $directory = dirname($this->path);
+        $this->files->ensureDirectoryExists($directory);
+
+        $tempPath = $directory.DIRECTORY_SEPARATOR.basename($this->path).self::TEMP_FILE_PREFIX.uniqid('', true);
+
+        $fp = fopen($tempPath, 'w');
+        if (! $fp) {
+            throw new ManifestException("Failed to open temporary manifest file [{$tempPath}] for writing.");
+        }
+
+        try {
+            fwrite($fp, $json."\n");
+            fflush($fp);
+        } finally {
+            fclose($fp);
+        }
+
+        if (! @rename($tempPath, $this->path)) {
+            @unlink($tempPath);
+            throw new ManifestException("Failed to atomically rename temporary file [{$tempPath}] to [{$this->path}].");
+        }
+
+        $this->data = $data;
     }
 
     /**
@@ -195,7 +288,7 @@ class Manifest
         }
 
         if ($outputPath !== null) {
-            $encoded = json_encode($jsonSchema, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+            $encoded = json_encode($jsonSchema, self::JSON_ENCODE_FLAGS);
             if ($encoded === false) {
                 throw new ManifestException('Failed to serialize JSON Schema for export.');
             }
@@ -205,6 +298,16 @@ class Manifest
         }
 
         return $jsonSchema;
+    }
+
+    /**
+     * Get all manifest data.
+     *
+     * @return array<string, mixed>
+     */
+    public function all(): array
+    {
+        return $this->load();
     }
 
     /**
@@ -220,9 +323,7 @@ class Manifest
      */
     public function has(string $key): bool
     {
-        $data = $this->load();
-
-        return Arr::has($data, $key);
+        return Arr::has($this->load(), $key);
     }
 
     /**
@@ -245,7 +346,7 @@ class Manifest
     public function append(string $key, mixed $value): self
     {
         $this->mutate(function (array $data) use ($key, $value): array {
-            $current = data_get($data, $key, []);
+            $current = data_get($data, $key, self::DEFAULT_APPEND_EMPTY_ARRAY);
             if (! is_array($current)) {
                 $current = [$current];
             }
@@ -255,6 +356,32 @@ class Manifest
 
             return $data;
         });
+
+        return $this;
+    }
+
+    /**
+     * Forget/remove a nested key from the manifest and persist atomically.
+     */
+    public function forget(string $key): self
+    {
+        $this->mutate(function (array $data) use ($key): array {
+            Arr::forget($data, $key);
+
+            return $data;
+        });
+
+        return $this;
+    }
+
+    /**
+     * Execute multiple modifications in a single locked transaction.
+     *
+     * @param  callable(array<string, mixed>): array<string, mixed>  $callback
+     */
+    public function batch(callable $callback): self
+    {
+        $this->mutate($callback);
 
         return $this;
     }
@@ -282,13 +409,14 @@ class Manifest
             }
 
             $stat = fstat($fp);
-            $size = $stat['size'] ?? 0;
-            $content = $size > 0 ? fread($fp, $size) : '';
+            $size = is_array($stat) && isset($stat['size']) ? (int) $stat['size'] : self::DEFAULT_STAT_SIZE;
+            $content = $size > self::DEFAULT_STAT_SIZE ? (string) fread($fp, $size) : self::DEFAULT_EMPTY_CONTENT;
 
-            $data = [];
-            if ($content !== false && trim($content) !== '') {
+            $data = self::DEFAULT_EMPTY_DATA;
+            if (trim($content) !== self::DEFAULT_EMPTY_CONTENT) {
                 try {
-                    $data = json_decode($content, true, 512, JSON_THROW_ON_ERROR);
+                    /** @var array<string, mixed> $data */
+                    $data = json_decode($content, true, self::JSON_DECODE_DEPTH, JSON_THROW_ON_ERROR);
                 } catch (JsonException $e) {
                     throw new ManifestException("Malformed JSON in manifest [{$this->path}]: {$e->getMessage()}", 0, $e);
                 }
@@ -305,7 +433,7 @@ class Manifest
                 $this->validate($mutated);
             }
 
-            $json = json_encode($mutated, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+            $json = json_encode($mutated, self::JSON_ENCODE_FLAGS);
             if ($json === false) {
                 throw new ManifestException("Failed to serialize manifest JSON for [{$this->path}].");
             }
@@ -314,6 +442,8 @@ class Manifest
             rewind($fp);
             fwrite($fp, $json."\n");
             fflush($fp);
+
+            $this->data = $mutated;
 
             return $mutated;
         } finally {

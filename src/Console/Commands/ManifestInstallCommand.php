@@ -10,6 +10,20 @@ use Illuminate\Console\Command;
 
 class ManifestInstallCommand extends Command
 {
+    public const ARG_NAME = 'name';
+
+    public const OPTION_FORCE = 'force';
+
+    public const ICON_CREATED = '<info>✔</info>';
+
+    public const ICON_SKIPPED = '<comment>⏭</comment>';
+
+    public const ICON_DEFAULT = '•';
+
+    public const SINGLE_MANIFEST_COUNT = 1;
+
+    public const FIRST_ITEM_INDEX = 0;
+
     /**
      * The name and signature of the console command.
      *
@@ -48,19 +62,19 @@ class ManifestInstallCommand extends Command
             return self::FAILURE;
         }
 
-        $name = $this->argument('name');
+        $name = $this->argument(self::ARG_NAME);
 
         if ($name === null || trim((string) $name) === '') {
             $keys = array_keys($manifests);
 
-            if (count($keys) === 1) {
-                $name = $keys[0];
+            if (count($keys) === self::SINGLE_MANIFEST_COUNT) {
+                $name = $keys[self::FIRST_ITEM_INDEX];
             } elseif ($this->input->isInteractive()) {
-                $name = (string) $this->choice('Select manifest to install:', $keys, $keys[0]);
+                $name = (string) $this->choice('Select manifest to install:', $keys, $keys[self::FIRST_ITEM_INDEX]);
             } else {
                 $this->error('Missing required argument [name]. Available manifests: '.implode(', ', $keys));
                 $this->comment('How to fix:');
-                $this->line("  • Run with explicit name: php artisan manifest:install {$keys[0]}");
+                $this->line("  • Run with explicit name: php artisan manifest:install {$keys[self::FIRST_ITEM_INDEX]}");
 
                 return self::FAILURE;
             }
@@ -76,7 +90,7 @@ class ManifestInstallCommand extends Command
             return self::FAILURE;
         }
 
-        $force = (bool) $this->option('force');
+        $force = (bool) $this->option(self::OPTION_FORCE);
         $rootPath = function_exists('base_path') ? base_path() : (string) getcwd();
 
         $this->info("Installing manifest [{$name}] ({$definition->filename})...");
@@ -84,9 +98,9 @@ class ManifestInstallCommand extends Command
 
         foreach ($steps as $step) {
             $icon = match ($step['status']) {
-                'created' => '<info>✔</info>',
-                'skipped' => '<comment>⏭</comment>',
-                default => '•',
+                ManifestInstaller::STATUS_CREATED => self::ICON_CREATED,
+                ManifestInstaller::STATUS_SKIPPED => self::ICON_SKIPPED,
+                default => self::ICON_DEFAULT,
             };
             $this->line("  {$icon} {$step['message']}");
         }

@@ -15,6 +15,20 @@ class ManifestInstaller
 
     public const DEFAULT_STUBS_DIR = 'stubs';
 
+    public const RUNNER_FILE_PERMISSIONS = 0755;
+
+    public const TYPE_MANIFEST = 'manifest';
+
+    public const TYPE_RUNNER = 'runner';
+
+    public const STATUS_CREATED = 'created';
+
+    public const STATUS_SKIPPED = 'skipped';
+
+    public const TOKEN_MANIFEST_PATH = '{{ manifestPath }}';
+
+    public const TOKEN_RUNNER_NAME = '{{ runnerName }}';
+
     public function __construct(
         protected Filesystem $files = new Filesystem,
         protected StubEngine $stubEngine = new StubEngine,
@@ -33,8 +47,8 @@ class ManifestInstaller
         // 1. Install or update manifest JSON file
         if ($this->files->exists($manifestPath) && ! $force) {
             $steps[] = [
-                'type' => 'manifest',
-                'status' => 'skipped',
+                'type' => self::TYPE_MANIFEST,
+                'status' => self::STATUS_SKIPPED,
                 'message' => "Manifest [{$definition->filename}] already exists.",
             ];
         } else {
@@ -44,8 +58,8 @@ class ManifestInstaller
             $manifest->save($initialData);
 
             $steps[] = [
-                'type' => 'manifest',
-                'status' => 'created',
+                'type' => self::TYPE_MANIFEST,
+                'status' => self::STATUS_CREATED,
                 'message' => "Initialized manifest [{$definition->filename}] with schema defaults.",
             ];
         }
@@ -64,25 +78,25 @@ class ManifestInstaller
                 sourceFile: $definition->runnerPath,
                 targetFile: $targetRunnerPath,
                 tokens: [
-                    '{{ manifestPath }}' => $definition->filename,
-                    '{{ runnerName }}' => $runnerName,
+                    self::TOKEN_MANIFEST_PATH => $definition->filename,
+                    self::TOKEN_RUNNER_NAME => $runnerName,
                 ],
                 overrideFile: $overrideFile,
                 force: $force,
             );
 
             if ($created) {
-                @chmod($targetRunnerPath, 0755);
+                @chmod($targetRunnerPath, self::RUNNER_FILE_PERMISSIONS);
 
                 $steps[] = [
-                    'type' => 'runner',
-                    'status' => 'created',
+                    'type' => self::TYPE_RUNNER,
+                    'status' => self::STATUS_CREATED,
                     'message' => "Published standalone executable runner to [./{$runnerName}].",
                 ];
             } else {
                 $steps[] = [
-                    'type' => 'runner',
-                    'status' => 'skipped',
+                    'type' => self::TYPE_RUNNER,
+                    'status' => self::STATUS_SKIPPED,
                     'message' => "Standalone runner [./{$runnerName}] already exists.",
                 ];
             }

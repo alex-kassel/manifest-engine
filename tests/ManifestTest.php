@@ -84,6 +84,55 @@ class ManifestTest extends TestCase
         $this->assertTrue($manifest->has('app.name'));
         $this->assertFalse($manifest->has('app.secret'));
         $this->assertSame(['Billing', 'Auth'], $manifest->get('app.modules'));
+        $this->assertIsArray($manifest->all());
+    }
+
+    public function test_it_caches_data_in_memory_and_reloads_with_fresh(): void
+    {
+        $path = "{$this->tempDir}/manifest.json";
+        $this->files->put($path, json_encode(['title' => 'Initial Title']));
+
+        $manifest = Manifest::open($path, files: $this->files);
+        $this->assertSame('Initial Title', $manifest->get('title'));
+
+        // Modify file externally on disk
+        $this->files->put($path, json_encode(['title' => 'External Update']));
+
+        // In-memory cache still returns initial value
+        $this->assertSame('Initial Title', $manifest->get('title'));
+
+        // Calling fresh() invalidates cache and reads external change
+        $manifest->fresh();
+        $this->assertSame('External Update', $manifest->get('title'));
+    }
+
+    public function test_it_batches_multiple_mutations(): void
+    {
+        $path = "{$this->tempDir}/manifest.json";
+        $this->files->put($path, json_encode(['counter' => 0, 'status' => 'pending']));
+
+        $manifest = Manifest::open($path, files: $this->files);
+        $manifest->batch(function (array $data): array {
+            $data['counter'] = 42;
+            $data['status'] = 'completed';
+
+            return $data;
+        });
+
+        $this->assertSame(42, $manifest->get('counter'));
+        $this->assertSame('completed', $manifest->get('status'));
+    }
+
+    public function test_it_forgets_keys(): void
+    {
+        $path = "{$this->tempDir}/manifest.json";
+        $this->files->put($path, json_encode(['a' => 1, 'b' => 2]));
+
+        $manifest = Manifest::open($path, files: $this->files);
+        $manifest->forget('a');
+
+        $this->assertFalse($manifest->has('a'));
+        $this->assertTrue($manifest->has('b'));
     }
 
     public function test_it_mutates_atomically(): void

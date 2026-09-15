@@ -5,11 +5,33 @@ declare(strict_types=1);
 namespace AlexKassel\ManifestEngine\Console\Commands;
 
 use AlexKassel\ManifestEngine\ManifestRegistry;
+use AlexKassel\ManifestEngine\Services\ManifestInstaller;
 use Illuminate\Console\Command;
 use Illuminate\Filesystem\Filesystem;
 
 class ManifestStatusCommand extends Command
 {
+    public const DEFAULT_PLACEHOLDER = '—';
+
+    public const STATUS_EXISTS_LABEL = '<info>✔ Exists</info>';
+
+    public const STATUS_MISSING_LABEL = '<comment>Missing</comment>';
+
+    public const RUNNER_EXISTS_PREFIX = '<info>✔ ./';
+
+    public const RUNNER_EXISTS_SUFFIX = '</info>';
+
+    public const RUNNER_MISSING_PREFIX = '<comment>missing (./';
+
+    public const RUNNER_MISSING_SUFFIX = ')</comment>';
+
+    /**
+     * @var array<int, string>
+     */
+    public const TABLE_HEADERS = ['Manifest', 'File', 'Status', 'Standalone Runner', 'Description'];
+
+    public const EMPTY_REGISTRY_MESSAGE = 'No manifest definitions are registered in this application.';
+
     /**
      * The name and signature of the console command.
      *
@@ -39,7 +61,7 @@ class ManifestStatusCommand extends Command
         $manifests = $this->registry->all();
 
         if (empty($manifests)) {
-            $this->comment('No manifest definitions are registered in this application.');
+            $this->comment(self::EMPTY_REGISTRY_MESSAGE);
 
             return self::SUCCESS;
         }
@@ -51,27 +73,30 @@ class ManifestStatusCommand extends Command
             $manifestPath = $rootPath.DIRECTORY_SEPARATOR.$def->filename;
             $hasManifest = $this->files->exists($manifestPath);
 
-            $runnerDisplay = '—';
+            $runnerDisplay = self::DEFAULT_PLACEHOLDER;
             if ($def->runnerPath !== null) {
                 $runnerFilename = basename($def->runnerPath);
-                $runnerName = str_ends_with($runnerFilename, '.stub')
-                    ? substr($runnerFilename, 0, -5)
+                $stubExt = ManifestInstaller::DEFAULT_STUB_EXTENSION;
+                $runnerName = str_ends_with($runnerFilename, $stubExt)
+                    ? substr($runnerFilename, 0, -strlen($stubExt))
                     : $runnerFilename;
 
                 $hasRunner = $this->files->exists($rootPath.DIRECTORY_SEPARATOR.$runnerName);
-                $runnerDisplay = $hasRunner ? "<info>✔ ./{$runnerName}</info>" : "<comment>missing (./{$runnerName})</comment>";
+                $runnerDisplay = $hasRunner
+                    ? self::RUNNER_EXISTS_PREFIX.$runnerName.self::RUNNER_EXISTS_SUFFIX
+                    : self::RUNNER_MISSING_PREFIX.$runnerName.self::RUNNER_MISSING_SUFFIX;
             }
 
             $rows[] = [
                 $name,
                 $def->filename,
-                $hasManifest ? '<info>✔ Exists</info>' : '<comment>Missing</comment>',
+                $hasManifest ? self::STATUS_EXISTS_LABEL : self::STATUS_MISSING_LABEL,
                 $runnerDisplay,
-                $def->description ?? '—',
+                $def->description ?? self::DEFAULT_PLACEHOLDER,
             ];
         }
 
-        $this->table(['Manifest', 'File', 'Status', 'Standalone Runner', 'Description'], $rows);
+        $this->table(self::TABLE_HEADERS, $rows);
 
         return self::SUCCESS;
     }

@@ -6,13 +6,15 @@ namespace AlexKassel\ManifestEngine;
 
 use AlexKassel\ManifestEngine\Console\Commands\ManifestInstallCommand;
 use AlexKassel\ManifestEngine\Console\Commands\ManifestStatusCommand;
-use AlexKassel\ManifestEngine\Contracts\ManifestSchema;
 use AlexKassel\ManifestEngine\Services\ManifestInstaller;
+use Illuminate\Contracts\Validation\Factory as ValidationFactory;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\ServiceProvider;
 
 class ManifestEngineServiceProvider extends ServiceProvider
 {
+    public const FACADE_ACCESSOR = 'manifest.engine';
+
     /**
      * Register any application services.
      */
@@ -26,38 +28,15 @@ class ManifestEngineServiceProvider extends ServiceProvider
             return new ManifestInstaller($app->make(Filesystem::class));
         });
 
-        $this->app->singleton('manifest.engine', function ($app) {
-            $registry = $app->make(ManifestRegistry::class);
+        $this->app->singleton(ManifestManager::class, function ($app) {
             $files = $app->make(Filesystem::class);
+            $registry = $app->make(ManifestRegistry::class);
+            $validatorFactory = $app->bound('validator') ? $app->make(ValidationFactory::class) : null;
 
-            return new class($files, $registry)
-            {
-                public function __construct(
-                    protected Filesystem $files,
-                    protected ManifestRegistry $registry,
-                ) {}
-
-                public function open(string $path, ?ManifestSchema $schema = null): Manifest
-                {
-                    return Manifest::open($path, $schema, $this->files);
-                }
-
-                public function register(
-                    string $name,
-                    string $filename,
-                    string|ManifestSchema $schema,
-                    ?string $runnerPath = null,
-                    ?string $description = null,
-                ): ManifestRegistry {
-                    return $this->registry->register($name, $filename, $schema, $runnerPath, $description);
-                }
-
-                public function registry(): ManifestRegistry
-                {
-                    return $this->registry;
-                }
-            };
+            return new ManifestManager($files, $registry, $validatorFactory);
         });
+
+        $this->app->alias(ManifestManager::class, self::FACADE_ACCESSOR);
     }
 
     /**
