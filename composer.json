@@ -1,0 +1,47 @@
+{
+    "name": "alex-kassel/manifest-engine",
+    "description": "Schema-driven, atomic file-backed JSON manifest engine for PHP and Laravel",
+    "keywords": [
+        "laravel",
+        "manifest",
+        "json",
+        "schema",
+        "flat-file",
+        "atomic",
+        "state-management"
+    ],
+    "homepage": "https://github.com/alex-kassel/manifest-engine",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Alex Kassel",
+            "homepage": "https://github.com/alex-kassel"
+        }
+    ],
+    "require": {
+        "php": "^8.2|^8.3|^8.4",
+        "illuminate/support": "^11.0|^12.0|^13.0",
+        "illuminate/filesystem": "^11.0|^12.0|^13.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "AlexKassel\\ManifestEngine\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "AlexKassel\\ManifestEngine\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "AlexKassel\\ManifestEngine\\ManifestEngineServiceProvider"
+            ],
+            "aliases": {
+                "Manifest": "AlexKassel\\ManifestEngine\\Facades\\Manifest"
+            }
+        }
+    }
+}
