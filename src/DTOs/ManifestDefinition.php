@@ -10,13 +10,14 @@ class ManifestDefinition
 {
     /**
      * @param  class-string<ManifestSchema>|ManifestSchema  $schema
+     * @param  array<string, mixed>  $metadata
      */
     public function __construct(
         public readonly string $name,
         public readonly string $filename,
         public readonly string|ManifestSchema $schema,
-        public readonly ?string $runnerPath = null,
         public readonly ?string $description = null,
+        public readonly array $metadata = [],
     ) {}
 
     /**

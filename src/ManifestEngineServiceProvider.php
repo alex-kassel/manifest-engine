@@ -4,9 +4,7 @@ declare(strict_types=1);
 
 namespace AlexKassel\ManifestEngine;
 
-use AlexKassel\ManifestEngine\Console\Commands\ManifestInstallCommand;
 use AlexKassel\ManifestEngine\Console\Commands\ManifestStatusCommand;
-use AlexKassel\ManifestEngine\Services\ManifestInstaller;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Validation\Factory as ValidationFactory;
 use Illuminate\Filesystem\Filesystem;
@@ -23,10 +21,6 @@ class ManifestEngineServiceProvider extends ServiceProvider
     {
         $this->app->singleton(ManifestRegistry::class, function () {
             return new ManifestRegistry;
-        });
-
-        $this->app->singleton(ManifestInstaller::class, function ($app) {
-            return new ManifestInstaller($app->make(Filesystem::class));
         });
 
         $this->app->singleton(ManifestManager::class, function ($app) {
@@ -48,7 +42,6 @@ class ManifestEngineServiceProvider extends ServiceProvider
     {
         if ($this->app->runningInConsole()) {
             $this->commands([
-                ManifestInstallCommand::class,
                 ManifestStatusCommand::class,
             ]);
         }

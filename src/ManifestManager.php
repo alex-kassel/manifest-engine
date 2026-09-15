@@ -36,20 +36,21 @@ class ManifestManager
      * Register a manifest definition in the application registry.
      *
      * @param  class-string<ManifestSchema>|ManifestSchema  $schema
+     * @param  array<string, mixed>  $metadata
      */
     public function register(
         string $name,
         string $filename,
         string|ManifestSchema $schema,
-        ?string $runnerPath = null,
         ?string $description = null,
+        array $metadata = [],
     ): ManifestRegistry {
         return $this->registry->register(
             name: $name,
             filename: $filename,
             schema: $schema,
-            runnerPath: $runnerPath,
             description: $description,
+            metadata: $metadata,
         );
     }
 

@@ -23,20 +23,21 @@ class ManifestRegistry
      * Register a new manifest definition.
      *
      * @param  class-string<ManifestSchema>|ManifestSchema  $schema
+     * @param  array<string, mixed>  $metadata
      */
     public function register(
         string $name,
         string $filename,
         string|ManifestSchema $schema,
-        ?string $runnerPath = null,
         ?string $description = null,
+        array $metadata = [],
     ): self {
         $this->manifests[$name] = new ManifestDefinition(
             name: $name,
             filename: $filename,
             schema: $schema,
-            runnerPath: $runnerPath,
             description: $description,
+            metadata: $metadata,
         );
 
         return $this;

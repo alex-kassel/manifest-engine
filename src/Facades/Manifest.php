@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Facade;
 
 /**
  * @method static ManifestDocument open(string $path, ?ManifestSchema $schema = null)
- * @method static ManifestRegistry register(string $name, string $filename, ManifestSchema|string $schema, ?string $runnerPath = null, ?string $description = null)
+ * @method static ManifestRegistry register(string $name, string $filename, ManifestSchema|string $schema, ?string $description = null, array $metadata = [])
  * @method static ManifestRegistry registry()
  * @method static Filesystem files()
  *
