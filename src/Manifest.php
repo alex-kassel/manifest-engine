@@ -59,6 +59,16 @@ class Manifest
     protected ?array $snapshot = null;
 
     /**
+     * Indicates whether in-memory data has unpersisted changes.
+     */
+    protected bool $isDirty = false;
+
+    /**
+     * File modification time recorded at last load.
+     */
+    protected ?int $lastLoadedMtime = null;
+
+    /**
      * SHA-1 hash of the file content at last load.
      */
     protected ?string $loadedHash = null;
@@ -237,12 +247,22 @@ class Manifest
     }
 
     /**
+     * Determine if in-memory data has unpersisted changes.
+     */
+    public function isDirty(): bool
+    {
+        return $this->isDirty;
+    }
+
+    /**
      * Invalidate in-memory cache and re-read fresh data from disk.
      */
     public function fresh(): self
     {
         $this->data = null;
         $this->loadedHash = null;
+        $this->lastLoadedMtime = null;
+        $this->isDirty = false;
         $this->load(forceFresh: true);
 
         return $this;
@@ -267,12 +287,24 @@ class Manifest
     public function load(bool $forceFresh = false): array
     {
         if (! $forceFresh && $this->data !== null) {
-            return $this->data;
+            if ($this->isDirty) {
+                return $this->data;
+            }
+
+            if ($this->exists()) {
+                clearstatcache(true, $this->path);
+                $mtime = @filemtime($this->path);
+                if ($mtime !== false && $mtime === $this->lastLoadedMtime) {
+                    return $this->data;
+                }
+            }
         }
 
         if (! $this->exists()) {
             if ($this->schema !== null) {
                 $this->loadedHash = null;
+                $this->lastLoadedMtime = null;
+                $this->isDirty = false;
 
                 return $this->data = $this->schema->defaults();
             }
@@ -282,6 +314,8 @@ class Manifest
 
         $content = $this->storage->readLocked($this->path);
         $this->loadedHash = sha1($content);
+        $this->lastLoadedMtime = @filemtime($this->path) ?: null;
+        $this->isDirty = false;
 
         if (trim($content) === self::DEFAULT_EMPTY_CONTENT) {
             $data = $this->schema !== null ? $this->schema->defaults() : self::DEFAULT_EMPTY_DATA;
@@ -306,19 +340,21 @@ class Manifest
     /**
      * Save data directly into manifest file atomically.
      *
-     * @param  array<string, mixed>  $data
+     * @param  array<string, mixed>|null  $data
      *
      * @throws ManifestException
      */
-    public function save(array $data): void
+    public function save(?array $data = null): self
     {
+        $payloadData = $data ?? $this->data ?? ($this->schema !== null ? $this->schema->defaults() : self::DEFAULT_EMPTY_DATA);
+
         if ($this->schema !== null) {
-            $this->validate($data);
+            $this->validate($payloadData);
         }
 
-        $this->dispatch(new ManifestSaving($this->path, $data));
+        $this->dispatch(new ManifestSaving($this->path, $payloadData));
 
-        $json = json_encode($data, self::JSON_ENCODE_FLAGS);
+        $json = json_encode($payloadData, self::JSON_ENCODE_FLAGS);
         if ($json === false) {
             throw new ManifestException("Failed to serialize manifest JSON for [{$this->path}].");
         }
@@ -326,21 +362,26 @@ class Manifest
         $payload = $json.self::NEWLINE;
         $this->storage->writeAtomic($this->path, $payload);
 
-        $this->data = $data;
+        $this->data = $payloadData;
         $this->loadedHash = sha1($payload);
+        clearstatcache(true, $this->path);
+        $this->lastLoadedMtime = @filemtime($this->path) ?: null;
+        $this->isDirty = false;
 
-        $this->dispatch(new ManifestSaved($this->path, $data));
+        $this->dispatch(new ManifestSaved($this->path, $payloadData));
+
+        return $this;
     }
 
     /**
      * Save data with optimistic concurrency verification.
      *
-     * @param  array<string, mixed>  $data
+     * @param  array<string, mixed>|null  $data
      *
      * @throws ManifestConcurrentModificationException
      * @throws ManifestException
      */
-    public function saveOptimistic(array $data, ?string $expectedHash = null): void
+    public function saveOptimistic(?array $data = null, ?string $expectedHash = null): self
     {
         $expected = $expectedHash ?? $this->loadedHash;
         $currentHash = $this->hash();
@@ -349,7 +390,7 @@ class Manifest
             throw new ManifestConcurrentModificationException($this->path, $currentHash, $expected);
         }
 
-        $this->save($data);
+        return $this->save($data);
     }
 
     /**
@@ -434,49 +475,61 @@ class Manifest
     }
 
     /**
-     * Set a value in the manifest using dot-notation and persist atomically.
+     * Set a value in the manifest using dot-notation.
      */
     public function set(string $key, mixed $value): self
     {
-        $this->mutate(function (array $data) use ($key, $value): array {
-            data_set($data, $key, $value);
+        try {
+            $data = $this->load();
+        } catch (ManifestNotFoundException) {
+            $data = $this->schema !== null ? $this->schema->defaults() : self::DEFAULT_EMPTY_DATA;
+        }
 
-            return $data;
-        });
+        data_set($data, $key, $value);
+        $this->data = $data;
+        $this->isDirty = true;
 
         return $this;
     }
 
     /**
-     * Append a value to an array at given key and persist atomically.
+     * Append a value to an array at given key.
      */
     public function append(string $key, mixed $value): self
     {
-        $this->mutate(function (array $data) use ($key, $value): array {
-            $current = data_get($data, $key, self::DEFAULT_APPEND_EMPTY_ARRAY);
-            if (! is_array($current)) {
-                $current = [$current];
-            }
+        try {
+            $data = $this->load();
+        } catch (ManifestNotFoundException) {
+            $data = $this->schema !== null ? $this->schema->defaults() : self::DEFAULT_EMPTY_DATA;
+        }
 
-            $current[] = $value;
-            data_set($data, $key, $current);
+        $current = data_get($data, $key, self::DEFAULT_APPEND_EMPTY_ARRAY);
+        if (! is_array($current)) {
+            $current = [$current];
+        }
 
-            return $data;
-        });
+        $current[] = $value;
+        data_set($data, $key, $current);
+        $this->data = $data;
+        $this->isDirty = true;
 
         return $this;
     }
 
     /**
-     * Forget/remove a nested key from the manifest and persist atomically.
+     * Forget/remove a nested key from the manifest.
      */
     public function forget(string $key): self
     {
-        $this->mutate(function (array $data) use ($key): array {
-            Arr::forget($data, $key);
+        try {
+            $data = $this->load();
+        } catch (ManifestNotFoundException) {
+            $data = $this->schema !== null ? $this->schema->defaults() : self::DEFAULT_EMPTY_DATA;
+        }
 
-            return $data;
-        });
+        Arr::forget($data, $key);
+        $this->data = $data;
+        $this->isDirty = true;
 
         return $this;
     }
@@ -548,6 +601,9 @@ class Manifest
 
         $this->data = $mutatedData;
         $this->loadedHash = sha1(json_encode($mutatedData, self::JSON_ENCODE_FLAGS).self::NEWLINE);
+        clearstatcache(true, $this->path);
+        $this->lastLoadedMtime = @filemtime($this->path) ?: null;
+        $this->isDirty = false;
 
         $this->dispatch(new ManifestMutated($this->path, $before, $mutatedData));
 

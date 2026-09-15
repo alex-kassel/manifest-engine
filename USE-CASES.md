@@ -94,3 +94,64 @@ try {
     $manifest->fresh();
 }
 ```
+
+---
+
+## Use Case 4: "Beyond .env" — Structured Local Configuration & Sandbox Profiles
+
+### Context
+Modern CLI applications, development sandboxes, and developer tools frequently need complex configuration profiles:
+* Lists of webhook URLs, allowed domains, or CORS origins.
+* Mock credentials, testing flags, and local port offsets.
+* Nested API keys per service or third-party mock providers.
+
+### Why Flat `.env` Files Fail Here
+`.env` files were designed exclusively for flat scalar strings (`KEY=value`). When developers attempt to store structured data in `.env`, they resort to fragile serializations (e.g. `ALLOWED_ORIGINS="['https://app.test','https://api.test']"`), which require dangerous manual parsing, cannot be validated, and fail silently on syntax mistakes.
+
+### How ManifestEngine Solves It
+* **Structured & Expressive:** Stores complex objects, lists, and booleans natively in `sandbox.json`.
+* **Dot-Notation Access:** Query deeply nested parameters effortlessly (`$manifest->get('services.stripe.webhook_endpoints')`).
+* **Validation & Defaults:** Prevents invalid configurations from crashing the application during boot.
+* **Safe Programmatic Updates:** CLI commands can dynamically tweak sandbox settings without breaking file formatting.
+
+```php
+// Query and mutate complex structured configuration safely
+$config = Manifest::open(base_path('sandbox.json'), new SandboxConfigSchema);
+
+$endpoints = $config->get('services.stripe.webhook_endpoints', []);
+$config->append('services.stripe.webhook_endpoints', 'http://localhost:8080/webhooks/stripe')
+    ->set('mocking.enabled', true)
+    ->save();
+```
+
+---
+
+## Use Case 5: Zero-Database Service Registry for Modular Monoliths
+
+### Context
+In Modular Monolith and Domain-Driven Design architectures, applications consist of dozens of decoupled modules (e.g. `Billing`, `Identity`, `Catalog`, `Fulfillment`). During framework bootstrap, the application must identify:
+* Which modules are currently enabled or in maintenance mode.
+* Which service providers and route files must be booted.
+* Module dependencies, event subscriptions, and feature toggle flags.
+
+### Why Databases Create Bootstrap Deadlocks
+If module activation is stored in a database table, Laravel cannot register module service providers or load module routes until a database connection is established and all migrations are verified. This creates bootstrap bottlenecks, complicates CLI commands, and introduces single-point-of-failure risks.
+
+### How ManifestEngine Solves It
+* **Instant Bootstrap:** ManifestEngine reads `modules.json` in microseconds during the earliest service provider registration phase, with zero database dependencies.
+* **Atomic Activation:** Enabling or disabling a module via CLI (`php artisan module:enable Billing`) executes an atomic, schema-validated write with exclusive lock protection.
+* **Git-Tracked State:** Module configuration branches and merges seamlessly with code releases across staging and production environments.
+
+```php
+// ServiceProvider dynamically registers active modules before DB connection
+public function register(): void
+{
+    $manifest = Manifest::get('modules');
+
+    foreach ($manifest->get('active_modules', []) as $module) {
+        if ($providerClass = $module['provider'] ?? null) {
+            $this->app->register($providerClass);
+        }
+    }
+}
+```

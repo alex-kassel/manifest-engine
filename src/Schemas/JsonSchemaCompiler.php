@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace AlexKassel\ManifestEngine\Schemas;
 
+use BackedEnum;
+use Illuminate\Validation\Rules\Enum;
+use ReflectionProperty;
 use Stringable;
 
 class JsonSchemaCompiler
@@ -40,6 +43,18 @@ class JsonSchemaCompiler
 
     public const RULE_UUID = 'uuid';
 
+    public const RULE_URL = 'url';
+
+    public const RULE_IP = 'ip';
+
+    public const RULE_IPV4 = 'ipv4';
+
+    public const RULE_IPV6 = 'ipv6';
+
+    public const RULE_DATE = 'date';
+
+    public const RULE_JSON = 'json';
+
     public const RULE_IN_PREFIX = 'in:';
 
     public const RULE_MIN_PREFIX = 'min:';
@@ -55,6 +70,14 @@ class JsonSchemaCompiler
     public const FORMAT_EMAIL = 'email';
 
     public const FORMAT_UUID = 'uuid';
+
+    public const FORMAT_URI = 'uri';
+
+    public const FORMAT_IPV4 = 'ipv4';
+
+    public const FORMAT_IPV6 = 'ipv6';
+
+    public const FORMAT_DATE_TIME = 'date-time';
 
     /**
      * @var array<int, string>
@@ -93,14 +116,18 @@ class JsonSchemaCompiler
     }
 
     /**
-     * Normalize string, object, or array rules into a flat array of rule strings.
+     * Normalize string, object, or array rules into a flat array of rule strings or rule objects.
      *
-     * @return array<int, string>
+     * @return array<int, mixed>
      */
     protected function normalizeRules(mixed $rules): array
     {
         if (is_string($rules)) {
             return explode(self::RULE_DELIMITER, $rules);
+        }
+
+        if ($rules instanceof Enum) {
+            return [$rules];
         }
 
         if ($rules instanceof Stringable || (is_object($rules) && method_exists($rules, '__toString'))) {
@@ -111,6 +138,8 @@ class JsonSchemaCompiler
             $normalized = [];
             foreach ($rules as $rule) {
                 if (is_string($rule)) {
+                    $normalized[] = $rule;
+                } elseif ($rule instanceof Enum) {
                     $normalized[] = $rule;
                 } elseif ($rule instanceof Stringable || (is_object($rule) && method_exists($rule, '__toString'))) {
                     $normalized[] = (string) $rule;
@@ -127,7 +156,7 @@ class JsonSchemaCompiler
      * Apply a single field's rules to the schema tree.
      *
      * @param  array<string, mixed>  $schema
-     * @param  array<int, string>  $rules
+     * @param  array<int, mixed>  $rules
      */
     protected function applyFieldRule(array &$schema, string $field, array $rules): void
     {
@@ -140,7 +169,7 @@ class JsonSchemaCompiler
      *
      * @param  array<string, mixed>  $node
      * @param  array<int, string>  $segments
-     * @param  array<int, string>  $rules
+     * @param  array<int, mixed>  $rules
      */
     protected function insertRuleIntoNode(array &$node, array $segments, array $rules): void
     {
@@ -198,11 +227,27 @@ class JsonSchemaCompiler
      * Populate property schema type, constraints, and enums from rules.
      *
      * @param  array<string, mixed>  $prop
-     * @param  array<int, string>  $rules
+     * @param  array<int, mixed>  $rules
      */
     protected function populatePropertySchema(array &$prop, array $rules): void
     {
         foreach ($rules as $rule) {
+            if ($rule instanceof Enum) {
+                $refProp = new ReflectionProperty($rule, 'type');
+                $enumClass = (string) $refProp->getValue($rule);
+                if (enum_exists($enumClass)) {
+                    $cases = array_map(static fn ($case) => $case instanceof BackedEnum ? $case->value : $case->name, $enumClass::cases());
+                    $prop['enum'] = $cases;
+                    $prop['type'] = is_int($cases[0] ?? null) ? self::TYPE_INTEGER : self::TYPE_STRING;
+                }
+
+                continue;
+            }
+
+            if (! is_string($rule)) {
+                continue;
+            }
+
             if ($rule === self::RULE_STRING) {
                 $prop['type'] = self::TYPE_STRING;
             } elseif ($rule === self::RULE_INTEGER) {
@@ -221,6 +266,20 @@ class JsonSchemaCompiler
             } elseif ($rule === self::RULE_UUID) {
                 $prop['type'] ??= self::TYPE_STRING;
                 $prop['format'] = self::FORMAT_UUID;
+            } elseif ($rule === self::RULE_URL) {
+                $prop['type'] ??= self::TYPE_STRING;
+                $prop['format'] = self::FORMAT_URI;
+            } elseif ($rule === self::RULE_IP || $rule === self::RULE_IPV4) {
+                $prop['type'] ??= self::TYPE_STRING;
+                $prop['format'] = self::FORMAT_IPV4;
+            } elseif ($rule === self::RULE_IPV6) {
+                $prop['type'] ??= self::TYPE_STRING;
+                $prop['format'] = self::FORMAT_IPV6;
+            } elseif ($rule === self::RULE_DATE) {
+                $prop['type'] ??= self::TYPE_STRING;
+                $prop['format'] = self::FORMAT_DATE_TIME;
+            } elseif ($rule === self::RULE_JSON) {
+                $prop['type'] ??= self::TYPE_STRING;
             } elseif (str_starts_with($rule, self::RULE_IN_PREFIX)) {
                 $values = explode(self::VALUE_DELIMITER, substr($rule, strlen(self::RULE_IN_PREFIX)));
                 $prop['enum'] = array_values(array_map(static fn (string $val): string => trim(trim($val), "\"'"), $values));

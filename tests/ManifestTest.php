@@ -314,7 +314,11 @@ class ManifestTest extends TestCase
         $manifest = Manifest::open($path, files: $this->files, events: $dispatcher);
         $this->assertContains('opened', $eventsDispatched);
 
-        $manifest->set('key', 'new');
+        $manifest->mutate(function (array $data): array {
+            $data['key'] = 'new';
+
+            return $data;
+        });
         $this->assertContains('mutated', $eventsDispatched);
 
         $manifest->save(['key' => 'manual_save']);

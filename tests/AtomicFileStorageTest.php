@@ -67,9 +67,14 @@ class AtomicFileStorageTest extends TestCase
 
     public function test_lock_path_resolution(): void
     {
-        $path = "{$this->tempDir}/doc.json";
-        $lockPath = $this->storage->lockPath($path);
+        $customLocksDir = "{$this->tempDir}/custom-locks";
+        $storage = new AtomicFileStorage($this->files, locksDirectory: $customLocksDir);
 
-        $this->assertSame($this->tempDir.'/.doc.json.lock', $lockPath);
+        $path = "{$this->tempDir}/doc.json";
+        $lockPath = $storage->lockPath($path);
+        $expectedHash = hash('sha256', realpath($path) ?: $path);
+
+        $this->assertSame($customLocksDir.'/'.$expectedHash.'.lock', $lockPath);
+        $this->assertNotSame($this->tempDir.'/.doc.json.lock', $lockPath);
     }
 }

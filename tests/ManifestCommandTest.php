@@ -91,7 +91,7 @@ class ManifestCommandTest extends TestCase
         $manifest = $manager->get('config', $this->tempDir);
         $this->assertSame(['channel' => 'stable', 'version' => 1], $manifest->all());
 
-        $manifest->set('channel', 'beta');
+        $manifest->set('channel', 'beta')->save();
         $this->assertSame('beta', $manifest->get('channel'));
 
         // Retrieve again via Facade
@@ -132,9 +132,9 @@ class ManifestCommandTest extends TestCase
         $this->artisan('manifest:status')
             ->assertSuccessful()
             ->expectsTable(
-                ['Manifest', 'File', 'Status', 'Description'],
+                ['Manifest', 'File', 'Status', 'Size', 'Last Modified', 'Description'],
                 [
-                    ['demo', 'demo.json', 'Missing', 'Demo schema'],
+                    ['demo', 'demo.json', 'Missing', '—', '—', 'Demo schema'],
                 ]
             );
     }

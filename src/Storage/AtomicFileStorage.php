@@ -10,6 +10,8 @@ use Illuminate\Filesystem\Filesystem;
 
 class AtomicFileStorage implements StorageDriver
 {
+    public const DEFAULT_LOCKS_DIR_SUBFOLDER = 'manifest-locks';
+
     public const DEFAULT_STAT_SIZE = 0;
 
     public const DEFAULT_EMPTY_CONTENT = '';
@@ -26,7 +28,12 @@ class AtomicFileStorage implements StorageDriver
 
     public function __construct(
         protected readonly Filesystem $files = new Filesystem,
-    ) {}
+        protected ?string $locksDirectory = null,
+    ) {
+        $this->locksDirectory = $locksDirectory ?? (function_exists('storage_path')
+            ? storage_path('framework'.DIRECTORY_SEPARATOR.self::DEFAULT_LOCKS_DIR_SUBFOLDER)
+            : sys_get_temp_dir().DIRECTORY_SEPARATOR.self::DEFAULT_LOCKS_DIR_SUBFOLDER);
+    }
 
     /**
      * Determine if a manifest file exists.
@@ -166,17 +173,35 @@ class AtomicFileStorage implements StorageDriver
             fclose($fp);
         }
 
-        if (! @rename($tempPath, $path)) {
-            @unlink($tempPath);
+        try {
+            if (@rename($tempPath, $path)) {
+                return;
+            }
+
+            // Windows-safe fallback: if rename failed on Windows and target exists, try unlink + rename
+            if (PHP_OS_FAMILY === 'Windows' && $this->exists($path)) {
+                if (@unlink($path) && @rename($tempPath, $path)) {
+                    return;
+                }
+            }
+
             throw new ManifestException("Failed to atomically rename temporary file [{$tempPath}] to [{$path}].");
+        } finally {
+            if (file_exists($tempPath)) {
+                @unlink($tempPath);
+            }
         }
     }
 
     /**
-     * Resolve the lock file path for a given manifest file.
+     * Resolve the lock file path for a given manifest file in the dedicated locks directory.
      */
     public function lockPath(string $path): string
     {
-        return dirname($path).DIRECTORY_SEPARATOR.self::LOCK_FILE_PREFIX.basename($path).self::LOCK_FILE_SUFFIX;
+        $this->files->ensureDirectoryExists($this->locksDirectory);
+        $real = realpath($path) ?: $path;
+        $hash = hash('sha256', $real);
+
+        return $this->locksDirectory.DIRECTORY_SEPARATOR.$hash.self::LOCK_FILE_SUFFIX;
     }
 }

@@ -89,14 +89,13 @@ use AlexKassel\ManifestEngine\Facades\Manifest;
 // 1. Open any manifest file directly
 $manifest = Manifest::open(base_path('registry.json'));
 
-// 2. Set nested values with dot-notation
-$manifest->set('meta.environment', 'production');
-
-// 3. Append to arrays
-$manifest->append('domains', [
-    'hostname' => 'api.example.com',
-    'ssl' => true,
-]);
+// 2. Set nested values with chainable in-memory mutations
+$manifest->set('meta.environment', 'production')
+    ->append('domains', [
+        'hostname' => 'api.example.com',
+        'ssl' => true,
+    ])
+    ->save();
 
 // 4. Query nested values
 $domains = $manifest->get('domains', []);
@@ -277,16 +276,17 @@ ManifestEngine adheres to Single Responsibility (SRP) and clean dependency injec
 | `Manifest::open(string $path, ?ManifestSchema $schema = null)` | `Manifest` | Instantiate a manifest document handler. |
 | `exists()` | `bool` | Check if the manifest file exists on disk. |
 | `init()` | `self` | Initialize the file with schema defaults if missing. |
-| `load(bool $forceFresh = false)` | `array` | Read and decode manifest data with shared lock. |
-| `save(array $data)` | `void` | Validate and write array data to the file atomically. |
-| `saveOptimistic(array $data, ?string $hash = null)` | `void` | Write data with concurrency conflict verification. |
+| `load(bool $forceFresh = false)` | `array` | Read and decode manifest data with shared lock and auto-invalidation. |
+| `isDirty()` | `bool` | Determine if in-memory data has unpersisted changes. |
+| `save(?array $data = null)` | `self` | Persist in-memory state or provided data atomically. |
+| `saveOptimistic(?array $data = null, ?string $hash = null)` | `self` | Write data with concurrency conflict verification. |
 | `get(string $key, mixed $default = null)` | `mixed` | Read a nested value using dot-notation. |
 | `has(string $key)` | `bool` | Check if a nested key exists. |
-| `set(string $key, mixed $value)` | `self` | Set a nested key and persist atomically. |
-| `append(string $key, mixed $value)` | `self` | Append a value to a nested array and persist. |
-| `forget(string $key)` | `self` | Remove a nested key and persist. |
+| `set(string $key, mixed $value)` | `self` | Set a nested key in memory (chainable). |
+| `append(string $key, mixed $value)` | `self` | Append a value to an array in memory (chainable). |
+| `forget(string $key)` | `self` | Remove a nested key in memory (chainable). |
 | `batch(callable $callback)` | `self` | Run multiple modifications in a single locked transaction. |
-| `mutate(callable $callback)` | `array` | Run an atomic read-modify-write transaction. |
+| `mutate(callable $callback)` | `array` | Run an atomic read-modify-write transaction immediately. |
 | `snapshot()` | `self` | Capture an in-memory state snapshot. |
 | `rollback()` | `self` | Restore state from the captured snapshot. |
 | `fresh()` / `reload()` | `self` | Invalidate in-memory cache and re-read from disk. |
@@ -302,6 +302,15 @@ ManifestEngine adheres to Single Responsibility (SRP) and clean dependency injec
 | `Manifest::get(string $name, ?string $basePath = null)` | `Manifest` | Retrieve and open a registered manifest by alias. |
 | `Manifest::has(string $name)` | `bool` | Check if a manifest alias is registered. |
 | `Manifest::register(...)` | `ManifestRegistry` | Register a manifest definition. |
+
+### Artisan Commands
+
+| Command | Description |
+|---|---|
+| `php artisan manifest:status` | Display registered manifests, file presence, file size, and last modified date. |
+| `php artisan manifest:validate {name?}` | Validate registered manifests against schema rules (ideal for CI/CD). |
+| `php artisan manifest:schema {name} {--output=}` | Generate and print or export JSON Schema for IDE autocompletion. |
+| `php artisan manifest:make {name} {--force}` | Scaffold a manifest file populated with its schema defaults. |
 
 ---
 

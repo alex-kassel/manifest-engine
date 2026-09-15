@@ -85,3 +85,44 @@ $manifest->collection('packages')->push([
 
 * **Query Builder Layer:** `$manifest->query('services.*')->where('status', 'healthy')->get()`.
 * **Zero Overhead:** Builds on top of existing `AtomicFileStorage` and Laravel's native collection utilities.
+
+---
+
+## 4. Custom Git Merge Driver (`php artisan manifest:merge`)
+
+### Problem
+When multiple developers or autonomous AI agents work concurrently on separate Git branches, standard line-based `git merge` frequently breaks JSON syntax upon branch reconciliation. Adding new entries to arrays or adding adjacent object keys often results in syntax-breaking merge conflicts (`<<<<<<< HEAD` markers, missing or trailing commas).
+
+### Planned Solution
+Implement a dedicated Git three-way merge driver command:
+
+```bash
+php artisan manifest:merge --base=%O --ours=%A --theirs=%B
+```
+
+* **Zero-Conflict Git Reconciliation:** Developers configure `.gitattributes` once:
+  ```gitattributes
+  *.manifest.json merge=manifest
+  workspace.json merge=manifest
+  ```
+* **Semantic Reconciliation:** The driver resolves structural conflicts automatically:
+  - Deep-merges non-conflicting dictionary keys from both branches.
+  - Combines unique array entries while preserving ordering.
+  - Re-formats and writes back canonical, syntactically valid JSON.
+
+---
+
+## 5. Reactive File Watcher & Live Event Streaming (Reverb & Octane)
+
+### Problem
+In long-running application runtimes (Laravel Octane, RoadRunner, FrankenPHP, background worker daemons, or interactive developer dashboards), detecting when an external process (Git pull, IDE, or AI agent) edits a manifest on disk currently requires manual polling.
+
+### Planned Solution
+Introduce a native, low-overhead file watcher CLI daemon and broadcasting pipeline:
+
+```bash
+php artisan manifest:watch {name}
+```
+
+* **Live Event Streaming:** Dispatches `ManifestExternallyChanged` events providing granular, field-level diffs (`added`, `updated`, `removed`).
+* **Real-Time WebSocket Broadcasting:** Seamlessly broadcasts updates to browser dashboards or frontends via **Laravel Reverb** or Server-Sent Events (SSE), turning static JSON documents into reactive real-time state buses.

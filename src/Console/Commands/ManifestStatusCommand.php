@@ -19,7 +19,7 @@ class ManifestStatusCommand extends Command
     /**
      * @var array<int, string>
      */
-    public const TABLE_HEADERS = ['Manifest', 'File', 'Status', 'Description'];
+    public const TABLE_HEADERS = ['Manifest', 'File', 'Status', 'Size', 'Last Modified', 'Description'];
 
     public const EMPTY_REGISTRY_MESSAGE = 'No manifest definitions are registered in this application.';
 
@@ -64,10 +64,15 @@ class ManifestStatusCommand extends Command
             $manifestPath = $rootPath.DIRECTORY_SEPARATOR.$def->filename;
             $hasManifest = $this->files->exists($manifestPath);
 
+            $size = $hasManifest ? $this->formatBytes((int) $this->files->size($manifestPath)) : self::DEFAULT_PLACEHOLDER;
+            $lastModified = $hasManifest ? date('Y-m-d H:i:s', (int) $this->files->lastModified($manifestPath)) : self::DEFAULT_PLACEHOLDER;
+
             $rows[] = [
                 $name,
                 $def->filename,
                 $hasManifest ? self::STATUS_EXISTS_LABEL : self::STATUS_MISSING_LABEL,
+                $size,
+                $lastModified,
                 $def->description ?? self::DEFAULT_PLACEHOLDER,
             ];
         }
@@ -75,5 +80,19 @@ class ManifestStatusCommand extends Command
         $this->table(self::TABLE_HEADERS, $rows);
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Format bytes into a human-readable string.
+     */
+    protected function formatBytes(int $bytes): string
+    {
+        if ($bytes < 1024) {
+            return $bytes.' B';
+        }
+
+        $kb = round($bytes / 1024, 1);
+
+        return $kb.' KB';
     }
 }

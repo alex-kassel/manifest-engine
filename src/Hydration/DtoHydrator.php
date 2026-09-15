@@ -6,11 +6,22 @@ namespace AlexKassel\ManifestEngine\Hydration;
 
 use AlexKassel\ManifestEngine\Contracts\ManifestDto;
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
+use BackedEnum;
+use DateTimeImmutable;
+use DateTimeInterface;
+use JsonSerializable;
 use ReflectionClass;
+use ReflectionNamedType;
+use ReflectionType;
 use Throwable;
 
 class DtoHydrator
 {
+    /**
+     * @var array<string, mixed>
+     */
+    public const DEFAULT_EMPTY_SERIALIZED_DATA = [];
+
     /**
      * Hydrate raw array data into a typed DTO object.
      *
@@ -25,6 +36,11 @@ class DtoHydrator
     public function hydrate(string $dtoClass, array $data): object
     {
         try {
+            if (method_exists($dtoClass, 'from')) {
+                /** @var T */
+                return $dtoClass::from($data);
+            }
+
             if (is_subclass_of($dtoClass, ManifestDto::class) || method_exists($dtoClass, 'fromArray')) {
                 /** @var T */
                 return $dtoClass::fromArray($data);
@@ -37,7 +53,8 @@ class DtoHydrator
                 $dto = new $dtoClass;
                 foreach ($data as $key => $value) {
                     if (property_exists($dto, $key)) {
-                        $dto->{$key} = $value;
+                        $propRef = $reflection->hasProperty($key) ? $reflection->getProperty($key) : null;
+                        $dto->{$key} = $this->castValue($value, $propRef?->getType());
                     }
                 }
 
@@ -49,7 +66,7 @@ class DtoHydrator
             foreach ($constructor->getParameters() as $param) {
                 $name = $param->getName();
                 if (array_key_exists($name, $data)) {
-                    $args[$name] = $data[$name];
+                    $args[$name] = $this->castValue($data[$name], $param->getType());
                 } elseif ($param->isDefaultValueAvailable()) {
                     $args[$name] = $param->getDefaultValue();
                 }
@@ -63,6 +80,36 @@ class DtoHydrator
     }
 
     /**
+     * Cast a raw value according to a reflection type hint (BackedEnum, nested DTO, or DateTime).
+     */
+    protected function castValue(mixed $value, ?ReflectionType $type): mixed
+    {
+        if ($value === null || ! ($type instanceof ReflectionNamedType) || $type->isBuiltin()) {
+            return $value;
+        }
+
+        $typeName = $type->getName();
+
+        if (is_subclass_of($typeName, BackedEnum::class)) {
+            if (is_string($value) || is_int($value)) {
+                return $typeName::tryFrom($value) ?? $value;
+            }
+
+            return $value;
+        }
+
+        if (is_a($typeName, DateTimeInterface::class, true) && is_string($value)) {
+            return new DateTimeImmutable($value);
+        }
+
+        if (class_exists($typeName) && is_array($value)) {
+            return $this->hydrate($typeName, $value);
+        }
+
+        return $value;
+    }
+
+    /**
      * Serialize a typed DTO object to an associative array.
      *
      * @return array<string, mixed>
@@ -73,12 +120,45 @@ class DtoHydrator
             /** @var array<string, mixed> $data */
             $data = $dto->toArray();
 
-            return $data;
+            return $this->normalizeSerializedArray($data);
+        }
+
+        if ($dto instanceof JsonSerializable) {
+            $serialized = $dto->jsonSerialize();
+            if (is_array($serialized)) {
+                return $this->normalizeSerializedArray($serialized);
+            }
         }
 
         /** @var array<string, mixed> $data */
         $data = get_object_vars($dto);
 
-        return $data;
+        return $this->normalizeSerializedArray($data);
+    }
+
+    /**
+     * Recursively normalize serialized array values (convert BackedEnums, dates, nested objects).
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    protected function normalizeSerializedArray(array $data): array
+    {
+        $normalized = [];
+        foreach ($data as $key => $value) {
+            if ($value instanceof BackedEnum) {
+                $normalized[$key] = $value->value;
+            } elseif ($value instanceof DateTimeInterface) {
+                $normalized[$key] = $value->format(DateTimeInterface::ATOM);
+            } elseif (is_object($value)) {
+                $normalized[$key] = $this->serialize($value);
+            } elseif (is_array($value)) {
+                $normalized[$key] = $this->normalizeSerializedArray($value);
+            } else {
+                $normalized[$key] = $value;
+            }
+        }
+
+        return $normalized;
     }
 }
