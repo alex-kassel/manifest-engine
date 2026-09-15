@@ -7,6 +7,7 @@ namespace AlexKassel\ManifestEngine;
 use AlexKassel\ManifestEngine\Console\Commands\ManifestInstallCommand;
 use AlexKassel\ManifestEngine\Console\Commands\ManifestStatusCommand;
 use AlexKassel\ManifestEngine\Services\ManifestInstaller;
+use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Validation\Factory as ValidationFactory;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\ServiceProvider;
@@ -32,8 +33,9 @@ class ManifestEngineServiceProvider extends ServiceProvider
             $files = $app->make(Filesystem::class);
             $registry = $app->make(ManifestRegistry::class);
             $validatorFactory = $app->bound('validator') ? $app->make(ValidationFactory::class) : null;
+            $events = $app->bound('events') ? $app->make(Dispatcher::class) : null;
 
-            return new ManifestManager($files, $registry, $validatorFactory);
+            return new ManifestManager($files, $registry, $validatorFactory, $events);
         });
 
         $this->app->alias(ManifestManager::class, self::FACADE_ACCESSOR);

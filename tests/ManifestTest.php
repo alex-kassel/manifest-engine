@@ -4,12 +4,53 @@ declare(strict_types=1);
 
 namespace AlexKassel\ManifestEngine\Tests;
 
+use AlexKassel\ManifestEngine\Contracts\ManifestDto;
+use AlexKassel\ManifestEngine\Events\ManifestMutated;
+use AlexKassel\ManifestEngine\Events\ManifestOpened;
+use AlexKassel\ManifestEngine\Events\ManifestSaved;
+use AlexKassel\ManifestEngine\Events\ManifestSaving;
+use AlexKassel\ManifestEngine\Events\ManifestValidationFailed;
+use AlexKassel\ManifestEngine\Exceptions\ManifestConcurrentModificationException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestNotFoundException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestValidationException;
 use AlexKassel\ManifestEngine\Manifest;
 use AlexKassel\ManifestEngine\Schemas\BaseSchema;
+use Illuminate\Events\Dispatcher;
 use Illuminate\Filesystem\Filesystem;
+use RuntimeException;
+
+class TestManifestDto implements ManifestDto
+{
+    public function __construct(
+        public string $name,
+        public int $version,
+    ) {}
+
+    public function toArray(): array
+    {
+        return [
+            'name' => $this->name,
+            'version' => $this->version,
+        ];
+    }
+
+    public static function fromArray(array $data): static
+    {
+        return new static(
+            name: (string) ($data['name'] ?? ''),
+            version: (int) ($data['version'] ?? 0),
+        );
+    }
+}
+
+class SimpleUserDto
+{
+    public function __construct(
+        public string $username,
+        public bool $active = true,
+    ) {}
+}
 
 class ManifestTest extends TestCase
 {
@@ -175,43 +216,160 @@ class ManifestTest extends TestCase
         $manifest->save(['status' => 'invalid_value']);
     }
 
-    public function test_it_exports_json_schema(): void
+    public function test_it_auto_compiles_json_schema_from_rules(): void
     {
-        $path = "{$this->tempDir}/manifest.json";
-        $schemaPath = "{$this->tempDir}/schema.json";
-
         $schema = new class extends BaseSchema
         {
             public function defaults(): array
             {
-                return ['name' => 'demo'];
+                return ['name' => 'Demo', 'version' => 1, 'tags' => ['prod']];
             }
 
             public function rules(): array
             {
-                return ['name' => ['required', 'string']];
-            }
-
-            public function jsonSchema(): ?array
-            {
                 return [
-                    '$schema' => 'http://json-schema.org/draft-07/schema#',
-                    'title' => 'DemoSchema',
-                    'type' => 'object',
-                    'properties' => [
-                        'name' => ['type' => 'string'],
-                    ],
-                    'required' => ['name'],
+                    'name' => 'required|string|min:3|max:50',
+                    'version' => 'required|integer|min:1',
+                    'tags' => 'present|array',
+                    'tags.*' => 'string',
+                    'status' => 'in:draft,published',
                 ];
             }
         };
 
-        $manifest = Manifest::open($path, $schema, $this->files);
-        $exported = $manifest->exportJsonSchema($schemaPath);
+        $jsonSchema = $schema->jsonSchema();
 
-        $this->assertIsArray($exported);
-        $this->assertTrue($this->files->exists($schemaPath));
-        $this->assertStringContainsString('DemoSchema', (string) $this->files->get($schemaPath));
+        $this->assertIsArray($jsonSchema);
+        $this->assertSame('http://json-schema.org/draft-07/schema#', $jsonSchema['$schema']);
+        $this->assertSame('object', $jsonSchema['type']);
+        $this->assertContains('name', $jsonSchema['required']);
+        $this->assertContains('version', $jsonSchema['required']);
+        $this->assertSame('string', $jsonSchema['properties']['name']['type']);
+        $this->assertSame(3, $jsonSchema['properties']['name']['minLength']);
+        $this->assertSame(50, $jsonSchema['properties']['name']['maxLength']);
+        $this->assertSame('integer', $jsonSchema['properties']['version']['type']);
+        $this->assertSame(1, $jsonSchema['properties']['version']['minimum']);
+        $this->assertSame('array', $jsonSchema['properties']['tags']['type']);
+        $this->assertSame('string', $jsonSchema['properties']['tags']['items']['type']);
+        $this->assertSame(['draft', 'published'], $jsonSchema['properties']['status']['enum']);
+    }
+
+    public function test_it_hydrates_and_saves_dto_contract(): void
+    {
+        $path = "{$this->tempDir}/manifest.json";
+        $this->files->put($path, json_encode(['name' => 'Analytics', 'version' => 2]));
+
+        $manifest = Manifest::open($path, files: $this->files);
+
+        $dto = $manifest->toDto(TestManifestDto::class);
+        $this->assertInstanceOf(TestManifestDto::class, $dto);
+        $this->assertSame('Analytics', $dto->name);
+        $this->assertSame(2, $dto->version);
+
+        $dto->name = 'Analytics V3';
+        $dto->version = 3;
+        $manifest->saveDto($dto);
+
+        $this->assertSame('Analytics V3', $manifest->get('name'));
+        $this->assertSame(3, $manifest->get('version'));
+    }
+
+    public function test_it_hydrates_dto_with_constructor_promotion(): void
+    {
+        $path = "{$this->tempDir}/manifest.json";
+        $this->files->put($path, json_encode(['username' => 'alex', 'active' => true]));
+
+        $manifest = Manifest::open($path, files: $this->files);
+        $dto = $manifest->toDto(SimpleUserDto::class);
+
+        $this->assertInstanceOf(SimpleUserDto::class, $dto);
+        $this->assertSame('alex', $dto->username);
+        $this->assertTrue($dto->active);
+    }
+
+    public function test_it_dispatches_lifecycle_events(): void
+    {
+        $path = "{$this->tempDir}/manifest.json";
+        $this->files->put($path, json_encode(['key' => 'old']));
+
+        $dispatcher = new Dispatcher;
+        $eventsDispatched = [];
+
+        $dispatcher->listen(ManifestOpened::class, function () use (&$eventsDispatched) {
+            $eventsDispatched[] = 'opened';
+        });
+        $dispatcher->listen(ManifestSaving::class, function () use (&$eventsDispatched) {
+            $eventsDispatched[] = 'saving';
+        });
+        $dispatcher->listen(ManifestSaved::class, function () use (&$eventsDispatched) {
+            $eventsDispatched[] = 'saved';
+        });
+        $dispatcher->listen(ManifestMutated::class, function () use (&$eventsDispatched) {
+            $eventsDispatched[] = 'mutated';
+        });
+        $dispatcher->listen(ManifestValidationFailed::class, function () use (&$eventsDispatched) {
+            $eventsDispatched[] = 'validation_failed';
+        });
+
+        $manifest = Manifest::open($path, files: $this->files, events: $dispatcher);
+        $this->assertContains('opened', $eventsDispatched);
+
+        $manifest->set('key', 'new');
+        $this->assertContains('mutated', $eventsDispatched);
+
+        $manifest->save(['key' => 'manual_save']);
+        $this->assertContains('saving', $eventsDispatched);
+        $this->assertContains('saved', $eventsDispatched);
+    }
+
+    public function test_it_captures_snapshot_and_rolls_back(): void
+    {
+        $path = "{$this->tempDir}/manifest.json";
+        $this->files->put($path, json_encode(['stage' => 'stable']));
+
+        $manifest = Manifest::open($path, files: $this->files);
+        $manifest->snapshot();
+
+        $manifest->set('stage', 'broken');
+        $this->assertSame('broken', $manifest->get('stage'));
+
+        $manifest->rollback();
+        $this->assertSame('stable', $manifest->get('stage'));
+    }
+
+    public function test_it_auto_rolls_back_memory_cache_on_mutation_exception(): void
+    {
+        $path = "{$this->tempDir}/manifest.json";
+        $this->files->put($path, json_encode(['counter' => 10]));
+
+        $manifest = Manifest::open($path, files: $this->files);
+
+        try {
+            $manifest->mutate(function (array $data): array {
+                $data['counter'] = 999;
+                throw new RuntimeException('Intentional crash');
+            });
+        } catch (RuntimeException) {
+            // Expected
+        }
+
+        // Memory cache must still be 10, not 999
+        $this->assertSame(10, $manifest->get('counter'));
+    }
+
+    public function test_it_saves_optimistically_and_throws_on_conflict(): void
+    {
+        $path = "{$this->tempDir}/manifest.json";
+        $this->files->put($path, json_encode(['version' => 1]));
+
+        $manifest = Manifest::open($path, files: $this->files);
+        $this->assertSame(1, $manifest->get('version'));
+
+        // Modify file externally (simulating another agent or git pull)
+        $this->files->put($path, json_encode(['version' => 2]));
+
+        $this->expectException(ManifestConcurrentModificationException::class);
+        $manifest->saveOptimistic(['version' => 3]);
     }
 
     public function test_it_throws_when_manifest_not_found_without_schema(): void

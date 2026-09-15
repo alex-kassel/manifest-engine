@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AlexKassel\ManifestEngine;
 
 use AlexKassel\ManifestEngine\Contracts\ManifestSchema;
+use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Validation\Factory as ValidationFactory;
 use Illuminate\Filesystem\Filesystem;
 
@@ -14,6 +15,7 @@ class ManifestManager
         protected readonly Filesystem $files,
         protected readonly ManifestRegistry $registry,
         protected readonly ?ValidationFactory $validatorFactory = null,
+        protected readonly ?Dispatcher $events = null,
     ) {}
 
     /**
@@ -26,6 +28,7 @@ class ManifestManager
             schema: $schema,
             files: $this->files,
             validatorFactory: $this->validatorFactory,
+            events: $this->events,
         );
     }
 

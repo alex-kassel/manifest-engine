@@ -8,6 +8,8 @@ use AlexKassel\ManifestEngine\Contracts\ManifestSchema;
 
 abstract class BaseSchema implements ManifestSchema
 {
+    protected ?JsonSchemaCompiler $schemaCompiler = null;
+
     /**
      * {@inheritdoc}
      */
@@ -39,6 +41,8 @@ abstract class BaseSchema implements ManifestSchema
      */
     public function jsonSchema(): ?array
     {
-        return null;
+        $compiler = $this->schemaCompiler ??= new JsonSchemaCompiler;
+
+        return $compiler->compile($this->rules());
     }
 }

@@ -4,11 +4,19 @@ declare(strict_types=1);
 
 namespace AlexKassel\ManifestEngine;
 
+use AlexKassel\ManifestEngine\Contracts\ManifestDto;
 use AlexKassel\ManifestEngine\Contracts\ManifestSchema;
+use AlexKassel\ManifestEngine\Events\ManifestMutated;
+use AlexKassel\ManifestEngine\Events\ManifestOpened;
+use AlexKassel\ManifestEngine\Events\ManifestSaved;
+use AlexKassel\ManifestEngine\Events\ManifestSaving;
+use AlexKassel\ManifestEngine\Events\ManifestValidationFailed;
+use AlexKassel\ManifestEngine\Exceptions\ManifestConcurrentModificationException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestNotFoundException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestValidationException;
 use Illuminate\Container\Container;
+use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Validation\Factory as ValidationFactory;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Arr;
@@ -16,6 +24,8 @@ use Illuminate\Translation\ArrayLoader;
 use Illuminate\Translation\Translator;
 use Illuminate\Validation\Factory;
 use JsonException;
+use ReflectionClass;
+use Throwable;
 
 class Manifest
 {
@@ -48,15 +58,33 @@ class Manifest
      */
     protected ?array $data = null;
 
+    /**
+     * In-memory snapshot for rollback.
+     *
+     * @var array<string, mixed>|null
+     */
+    protected ?array $snapshot = null;
+
+    /**
+     * SHA-1 hash of the file content at last load.
+     */
+    protected ?string $loadedHash = null;
+
     protected ?ValidationFactory $validatorFactory = null;
+
+    protected ?Dispatcher $events = null;
 
     public function __construct(
         public readonly string $path,
         public readonly ?ManifestSchema $schema = null,
         protected Filesystem $files = new Filesystem,
         ?ValidationFactory $validatorFactory = null,
+        ?Dispatcher $events = null,
     ) {
         $this->validatorFactory = $validatorFactory;
+        $this->events = $events;
+
+        $this->dispatch(new ManifestOpened($this->path));
     }
 
     /**
@@ -67,8 +95,37 @@ class Manifest
         ?ManifestSchema $schema = null,
         ?Filesystem $files = null,
         ?ValidationFactory $validatorFactory = null,
+        ?Dispatcher $events = null,
     ): self {
-        return new self($path, $schema, $files ?? new Filesystem, $validatorFactory);
+        return new self($path, $schema, $files ?? new Filesystem, $validatorFactory, $events);
+    }
+
+    /**
+     * Set explicit event dispatcher.
+     */
+    public function setEventDispatcher(Dispatcher $events): self
+    {
+        $this->events = $events;
+
+        return $this;
+    }
+
+    /**
+     * Dispatch an event if dispatcher or container is available.
+     */
+    protected function dispatch(object $event): void
+    {
+        if ($this->events !== null) {
+            $this->events->dispatch($event);
+
+            return;
+        }
+
+        if (class_exists(Container::class) && Container::getInstance()?->bound('events')) {
+            /** @var Dispatcher $dispatcher */
+            $dispatcher = Container::getInstance()->make('events');
+            $dispatcher->dispatch($event);
+        }
     }
 
     /**
@@ -122,7 +179,10 @@ class Manifest
         );
 
         if ($validator->fails()) {
-            throw new ManifestValidationException($this->path, $validator->errors()->toArray());
+            $errors = $validator->errors()->toArray();
+            $this->dispatch(new ManifestValidationFailed($this->path, $errors));
+
+            throw new ManifestValidationException($this->path, $errors);
         }
     }
 
@@ -132,6 +192,26 @@ class Manifest
     public function exists(): bool
     {
         return $this->files->exists($this->path);
+    }
+
+    /**
+     * Calculate SHA-1 hash of the manifest file on disk.
+     */
+    public function hash(): ?string
+    {
+        if (! $this->exists()) {
+            return null;
+        }
+
+        return sha1((string) $this->files->get($this->path));
+    }
+
+    /**
+     * Get SHA-1 hash of the file as recorded during the last load.
+     */
+    public function loadedHash(): ?string
+    {
+        return $this->loadedHash;
     }
 
     /**
@@ -148,11 +228,38 @@ class Manifest
     }
 
     /**
+     * Capture an in-memory snapshot of current manifest data for potential rollback.
+     */
+    public function snapshot(): self
+    {
+        $this->snapshot = $this->load();
+
+        return $this;
+    }
+
+    /**
+     * Rollback manifest state to the last captured snapshot.
+     *
+     * @throws ManifestException
+     */
+    public function rollback(): self
+    {
+        if ($this->snapshot === null) {
+            throw new ManifestException("No snapshot available to rollback manifest [{$this->path}].");
+        }
+
+        $this->save($this->snapshot);
+
+        return $this;
+    }
+
+    /**
      * Invalidate in-memory cache and re-read fresh data from disk.
      */
     public function fresh(): self
     {
         $this->data = null;
+        $this->loadedHash = null;
         $this->load(forceFresh: true);
 
         return $this;
@@ -182,6 +289,8 @@ class Manifest
 
         if (! $this->exists()) {
             if ($this->schema !== null) {
+                $this->loadedHash = null;
+
                 return $this->data = $this->schema->defaults();
             }
 
@@ -205,6 +314,8 @@ class Manifest
             flock($fp, LOCK_UN);
             fclose($fp);
         }
+
+        $this->loadedHash = sha1($content);
 
         if (trim($content) === self::DEFAULT_EMPTY_CONTENT) {
             $data = $this->schema !== null ? $this->schema->defaults() : self::DEFAULT_EMPTY_DATA;
@@ -239,6 +350,8 @@ class Manifest
             $this->validate($data);
         }
 
+        $this->dispatch(new ManifestSaving($this->path, $data));
+
         $json = json_encode($data, self::JSON_ENCODE_FLAGS);
         if ($json === false) {
             throw new ManifestException("Failed to serialize manifest JSON for [{$this->path}].");
@@ -267,6 +380,29 @@ class Manifest
         }
 
         $this->data = $data;
+        $this->loadedHash = sha1($json."\n");
+
+        $this->dispatch(new ManifestSaved($this->path, $data));
+    }
+
+    /**
+     * Save data with optimistic concurrency verification.
+     *
+     * @param  array<string, mixed>  $data
+     *
+     * @throws ManifestConcurrentModificationException
+     * @throws ManifestException
+     */
+    public function saveOptimistic(array $data, ?string $expectedHash = null): void
+    {
+        $expected = $expectedHash ?? $this->loadedHash;
+        $currentHash = $this->hash();
+
+        if ($expected !== null && $currentHash !== null && $currentHash !== $expected) {
+            throw new ManifestConcurrentModificationException($this->path, $currentHash, $expected);
+        }
+
+        $this->save($data);
     }
 
     /**
@@ -308,6 +444,72 @@ class Manifest
     public function all(): array
     {
         return $this->load();
+    }
+
+    /**
+     * Hydrate manifest data into a typed DTO object.
+     *
+     * @template T of object
+     *
+     * @param  class-string<T>  $dtoClass
+     * @return T
+     *
+     * @throws ManifestException
+     */
+    public function toDto(string $dtoClass): object
+    {
+        $data = $this->all();
+
+        if (is_subclass_of($dtoClass, ManifestDto::class) || method_exists($dtoClass, 'fromArray')) {
+            /** @var T */
+            return $dtoClass::fromArray($data);
+        }
+
+        $reflection = new ReflectionClass($dtoClass);
+        $constructor = $reflection->getConstructor();
+
+        if ($constructor === null || $constructor->getNumberOfParameters() === 0) {
+            $dto = new $dtoClass;
+            foreach ($data as $key => $value) {
+                if (property_exists($dto, $key)) {
+                    $dto->{$key} = $value;
+                }
+            }
+
+            /** @var T */
+            return $dto;
+        }
+
+        $args = [];
+        foreach ($constructor->getParameters() as $param) {
+            $name = $param->getName();
+            if (array_key_exists($name, $data)) {
+                $args[$name] = $data[$name];
+            } elseif ($param->isDefaultValueAvailable()) {
+                $args[$name] = $param->getDefaultValue();
+            }
+        }
+
+        /** @var T */
+        return $reflection->newInstanceArgs($args);
+    }
+
+    /**
+     * Save a typed DTO object back to the manifest.
+     *
+     * @throws ManifestException
+     */
+    public function saveDto(object $dto): void
+    {
+        if ($dto instanceof ManifestDto || method_exists($dto, 'toArray')) {
+            /** @var array<string, mixed> $data */
+            $data = $dto->toArray();
+        } else {
+            /** @var array<string, mixed> $data */
+            $data = get_object_vars($dto);
+        }
+
+        $this->save($data);
     }
 
     /**
@@ -397,6 +599,7 @@ class Manifest
     public function mutate(callable $callback): array
     {
         $this->files->ensureDirectoryExists(dirname($this->path));
+        $previousData = $this->data;
 
         $fp = fopen($this->path, 'c+');
         if (! $fp) {
@@ -424,13 +627,21 @@ class Manifest
                 $data = $this->schema->defaults();
             }
 
-            $mutated = $callback($data);
-            if (! is_array($mutated)) {
-                throw new ManifestException('Mutation callback must return an array.');
-            }
+            $before = $data;
 
-            if ($this->schema !== null) {
-                $this->validate($mutated);
+            try {
+                $mutated = $callback($data);
+                if (! is_array($mutated)) {
+                    throw new ManifestException('Mutation callback must return an array.');
+                }
+
+                if ($this->schema !== null) {
+                    $this->validate($mutated);
+                }
+            } catch (Throwable $e) {
+                // Auto-rollback in-memory state on mutation or validation failure
+                $this->data = $previousData;
+                throw $e;
             }
 
             $json = json_encode($mutated, self::JSON_ENCODE_FLAGS);
@@ -444,6 +655,9 @@ class Manifest
             fflush($fp);
 
             $this->data = $mutated;
+            $this->loadedHash = sha1($json."\n");
+
+            $this->dispatch(new ManifestMutated($this->path, $before, $mutated));
 
             return $mutated;
         } finally {
