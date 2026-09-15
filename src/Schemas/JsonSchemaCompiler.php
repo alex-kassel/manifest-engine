@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace AlexKassel\ManifestEngine\Schemas;
 
+use Stringable;
+
 class JsonSchemaCompiler
 {
     public const SCHEMA_DRAFT_07 = 'http://json-schema.org/draft-07/schema#';
@@ -22,6 +24,8 @@ class JsonSchemaCompiler
 
     public const RULE_REQUIRED = 'required';
 
+    public const RULE_NULLABLE = 'nullable';
+
     public const RULE_STRING = 'string';
 
     public const RULE_INTEGER = 'integer';
@@ -31,6 +35,10 @@ class JsonSchemaCompiler
     public const RULE_BOOLEAN = 'boolean';
 
     public const RULE_ARRAY = 'array';
+
+    public const RULE_EMAIL = 'email';
+
+    public const RULE_UUID = 'uuid';
 
     public const RULE_IN_PREFIX = 'in:';
 
@@ -44,6 +52,13 @@ class JsonSchemaCompiler
 
     public const WILDCARD_SEGMENT = '*';
 
+    public const FORMAT_EMAIL = 'email';
+
+    public const FORMAT_UUID = 'uuid';
+
+    /**
+     * @var array<int, string>
+     */
     public const DEFAULT_EMPTY_RULES = [];
 
     /**
@@ -78,7 +93,7 @@ class JsonSchemaCompiler
     }
 
     /**
-     * Normalize string or array rules into a flat array of rule strings.
+     * Normalize string, object, or array rules into a flat array of rule strings.
      *
      * @return array<int, string>
      */
@@ -88,11 +103,17 @@ class JsonSchemaCompiler
             return explode(self::RULE_DELIMITER, $rules);
         }
 
+        if ($rules instanceof Stringable || (is_object($rules) && method_exists($rules, '__toString'))) {
+            return explode(self::RULE_DELIMITER, (string) $rules);
+        }
+
         if (is_array($rules)) {
             $normalized = [];
             foreach ($rules as $rule) {
                 if (is_string($rule)) {
                     $normalized[] = $rule;
+                } elseif ($rule instanceof Stringable || (is_object($rule) && method_exists($rule, '__toString'))) {
+                    $normalized[] = (string) $rule;
                 }
             }
 
@@ -192,9 +213,17 @@ class JsonSchemaCompiler
                 $prop['type'] = self::TYPE_BOOLEAN;
             } elseif ($rule === self::RULE_ARRAY) {
                 $prop['type'] = self::TYPE_ARRAY;
+            } elseif ($rule === self::RULE_NULLABLE) {
+                $prop['nullable'] = true;
+            } elseif ($rule === self::RULE_EMAIL) {
+                $prop['type'] ??= self::TYPE_STRING;
+                $prop['format'] = self::FORMAT_EMAIL;
+            } elseif ($rule === self::RULE_UUID) {
+                $prop['type'] ??= self::TYPE_STRING;
+                $prop['format'] = self::FORMAT_UUID;
             } elseif (str_starts_with($rule, self::RULE_IN_PREFIX)) {
                 $values = explode(self::VALUE_DELIMITER, substr($rule, strlen(self::RULE_IN_PREFIX)));
-                $prop['enum'] = array_values(array_map('trim', $values));
+                $prop['enum'] = array_values(array_map(static fn (string $val): string => trim(trim($val), "\"'"), $values));
             } elseif (str_starts_with($rule, self::RULE_MIN_PREFIX)) {
                 $val = substr($rule, strlen(self::RULE_MIN_PREFIX));
                 if (is_numeric($val)) {

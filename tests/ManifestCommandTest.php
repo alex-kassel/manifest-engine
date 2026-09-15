@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace AlexKassel\ManifestEngine\Tests;
 
+use AlexKassel\ManifestEngine\Exceptions\ManifestException;
+use AlexKassel\ManifestEngine\Facades\Manifest;
+use AlexKassel\ManifestEngine\ManifestManager;
 use AlexKassel\ManifestEngine\ManifestRegistry;
 use AlexKassel\ManifestEngine\Schemas\BaseSchema;
 use Illuminate\Filesystem\Filesystem;
@@ -33,7 +36,7 @@ class ManifestCommandTest extends TestCase
     public function test_registry_stores_and_retrieves_definitions(): void
     {
         $registry = new ManifestRegistry;
-        $this->assertFalse($registry->has('workspace'));
+        $this->assertFalse($registry->has('app_registry'));
 
         $schema = new class extends BaseSchema
         {
@@ -48,15 +51,61 @@ class ManifestCommandTest extends TestCase
             }
         };
 
-        $registry->register('workspace', 'workspace.json', $schema, description: 'Workspace manifest', metadata: ['tag' => 'core']);
+        $registry->register('app_registry', 'app_registry.json', $schema, description: 'Application registry', metadata: ['tag' => 'core']);
 
-        $this->assertTrue($registry->has('workspace'));
-        $def = $registry->get('workspace');
+        $this->assertTrue($registry->has('app_registry'));
+        $def = $registry->get('app_registry');
         $this->assertNotNull($def);
-        $this->assertSame('workspace', $def->name);
-        $this->assertSame('workspace.json', $def->filename);
-        $this->assertSame('Workspace manifest', $def->description);
+        $this->assertSame('app_registry', $def->name);
+        $this->assertSame('app_registry.json', $def->filename);
+        $this->assertSame('Application registry', $def->description);
         $this->assertSame(['tag' => 'core'], $def->metadata);
+    }
+
+    public function test_manifest_manager_opens_registered_manifest_by_alias(): void
+    {
+        /** @var ManifestManager $manager */
+        $manager = app(ManifestManager::class);
+        $manager->registry()->clear();
+
+        $schema = new class extends BaseSchema
+        {
+            public function defaults(): array
+            {
+                return ['channel' => 'stable', 'version' => 1];
+            }
+
+            public function rules(): array
+            {
+                return [
+                    'channel' => ['required', 'string'],
+                    'version' => ['required', 'integer'],
+                ];
+            }
+        };
+
+        $manager->register('config', 'config.json', $schema, description: 'Config schema');
+
+        $this->assertTrue($manager->has('config'));
+
+        $manifest = $manager->get('config', $this->tempDir);
+        $this->assertSame(['channel' => 'stable', 'version' => 1], $manifest->all());
+
+        $manifest->set('channel', 'beta');
+        $this->assertSame('beta', $manifest->get('channel'));
+
+        // Retrieve again via Facade
+        $reloaded = Manifest::get('config', $this->tempDir);
+        $this->assertSame('beta', $reloaded->get('channel'));
+    }
+
+    public function test_manifest_manager_throws_on_unregistered_alias(): void
+    {
+        /** @var ManifestManager $manager */
+        $manager = app(ManifestManager::class);
+
+        $this->expectException(ManifestException::class);
+        $manager->get('unregistered_alias');
     }
 
     public function test_manifest_status_command(): void

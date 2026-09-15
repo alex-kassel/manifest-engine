@@ -11,6 +11,7 @@
   <a href="#installation">Installation</a> •
   <a href="#quickstart">Quickstart</a> •
   <a href="#usage--recipes">Usage & Recipes</a> •
+  <a href="#architecture">Architecture</a> •
   <a href="#api-reference">API Reference</a> •
   <a href="#testing">Testing</a> •
   <a href="LICENSE.md">License</a>
@@ -27,37 +28,42 @@
 
 ## Why This Exists
 
-Storing application metadata, registries, or domain states in relational databases (MySQL, SQLite) creates significant friction:
-* They are opaque to Git version control.
-* They cannot be easily diffed in Pull Requests.
-* AI coding agents cannot easily inspect or adjust them without database connectivity.
-* Environment migrations and rollbacks become stateful and complex.
+Storing application metadata, registries, configuration state, or domain catalogs in traditional relational databases (MySQL, Postgres) introduces unnecessary friction for local and developer tooling:
+* **Opaque to Git:** State cannot be easily committed, reviewed in Pull Requests, or diffed.
+* **Complex for AI Agents:** AI coding agents natively inspect and edit local flat files, but require external database connections to access SQL data.
+* **Migration Overhead:** Environment rollbacks and synchronization require stateful migrations.
 
-On the other hand, writing raw `json_decode()` and `file_put_contents()` to a JSON file is dangerous:
-* **Race conditions & Corruption:** Concurrent requests or parallel agent executions can overwrite or corrupt the file.
-* **Schema Drift:** Without enforcement, malformed keys and invalid types creep in.
-* **Ugly Diffs:** Inconsistent formatting generates noisy, messy Git diffs.
+Conversely, ad-hoc `json_decode()` and `file_put_contents()` approaches introduce serious hazards:
+* **Race Conditions & File Corruption:** Concurrent executions or sudden process termination truncate or corrupt JSON files.
+* **Schema Drift:** Unvalidated writes allow corrupted keys and invalid types to proliferate.
+* **Noisy Diffs:** Inconsistent JSON key formatting and unescaped characters cause chaotic Git diffs.
 
-**ManifestEngine** bridges this gap. It provides a lightweight, schema-driven, file-backed repository with **exclusive file locking (`flock`)**, **atomic transactions**, **dot-notation traversal**, and **Git-friendly serialization**.
+**ManifestEngine** solves this by providing an atomic, schema-validated, file-backed state repository with **OS-level locking (`flock`)**, **safe atomic rename transactions**, **optimistic concurrency control**, **dot-notation traversal**, and **automatic JSON Schema generation for IDEs**.
 
 ---
 
 ## Key Features
 
-* **Atomic File Transactions:** Safe concurrent reads and writes with exclusive OS-level file locks (`LOCK_EX`).
-* **Schema-Driven Validation:** Enforce structure, default values, and integrity rules before any data is written to disk.
-* **Dot-Notation Access:** Query and update nested paths effortlessly (`$manifest->get('workspaces.packages')`, `$manifest->append('domains', $entry)`).
-* **Git-Optimized Formatting:** Output is always formatted with `JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES` and sorted keys for clean, readable Git diffs.
-* **Zero Bloat & Decoupled:** Built directly on `Illuminate\Filesystem\Filesystem`. Works in Laravel commands, standalone PHP scripts, or background workers.
+* **🛡️ Safe Atomic Transactions:** Reads use shared locks (`LOCK_SH`); writes and mutations run under exclusive locks (`LOCK_EX`) with temporary-file atomic replacement (`rename`), eliminating 0-byte file truncation risks.
+* **📐 Schema-Driven Validation:** Enforce structure, default values, and data integrity using standard Laravel validation rules.
+* **💡 Automatic JSON Schema:** Automatically compiles Laravel validation rules into Draft-07 JSON Schema for VS Code and PhpStorm autocompletion.
+* **⚡ Optimistic Concurrency Control:** Detect external changes on disk using content hashes (`saveOptimistic()`).
+* **📦 Typed DTO Hydration:** Seamlessly map manifest data to and from typed DTOs via the `ManifestDto` contract or constructor reflection.
+* **⏪ Snapshots & Rollbacks:** Take in-memory snapshots and roll back state on failed operations.
+* **🔍 Dot-Notation Access:** Query, mutate, and delete nested paths effortlessly (`$manifest->get('app.channels')`, `$manifest->append('domains', $entry)`).
+* **🗂️ Centralized Manifest Registry:** Register application manifests once and open them anywhere via alias: `Manifest::get('registry')`.
+* ** Git-Optimized Serialization:** Always formatted with `JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES` and trailing newline.
 
 ---
 
 ## Requirements
 
 * **PHP:** `^8.2` | `^8.3` | `^8.4`
-* **Laravel Framework (or Components):** `^11.0` | `^12.0` | `^13.0`
+* **Laravel (or Standalone Components):** `^11.0` | `^12.0` | `^13.0`
   * `illuminate/filesystem`
   * `illuminate/support`
+  * `illuminate/validation`
+  * `illuminate/translation`
 
 ---
 
@@ -69,7 +75,7 @@ Install via Composer:
 composer require alex-kassel/manifest-engine
 ```
 
-If using Laravel, the service provider and `Manifest` facade are automatically registered via package discovery.
+In Laravel applications, the Service Provider and `Manifest` facade are automatically discovered.
 
 ---
 
@@ -78,22 +84,23 @@ If using Laravel, the service provider and `Manifest` facade are automatically r
 ```php
 use AlexKassel\ManifestEngine\Facades\Manifest;
 
-$manifest = Manifest::open(base_path('domains.json'));
+// 1. Open any manifest file directly
+$manifest = Manifest::open(base_path('registry.json'));
 
-// 1. Set nested values with dot-notation
+// 2. Set nested values with dot-notation
 $manifest->set('meta.environment', 'production');
 
-// 2. Append to arrays
+// 3. Append to arrays
 $manifest->append('domains', [
     'hostname' => 'api.example.com',
     'ssl' => true,
 ]);
 
-// 3. Query nested values
+// 4. Query nested values
 $domains = $manifest->get('domains', []);
 $env = $manifest->get('meta.environment');
 
-// 4. Safe atomic transaction
+// 5. Safe atomic transaction
 $manifest->mutate(function (array $data): array {
     $data['counter'] = ($data['counter'] ?? 0) + 1;
     return $data;
@@ -104,9 +111,9 @@ $manifest->mutate(function (array $data): array {
 
 ## Usage & Recipes
 
-### 1. Defining a Schema with Laravel Validator & JSON Schema
+### 1. Defining a Schema with Auto-Compiled JSON Schema
 
-Extend `AlexKassel\ManifestEngine\Schemas\BaseSchema` to declare defaults, Laravel validation rules, and IDE `$schema`:
+Extend `AlexKassel\ManifestEngine\Schemas\BaseSchema` to define default states and Laravel validation rules:
 
 ```php
 namespace App\Manifests;
@@ -132,19 +139,6 @@ class DomainRegistrySchema extends BaseSchema
             'meta'      => ['sometimes', 'array'],
         ];
     }
-
-    public function jsonSchema(): ?array
-    {
-        return [
-            '$schema' => 'http://json-schema.org/draft-07/schema#',
-            'type' => 'object',
-            'properties' => [
-                'version' => ['type' => 'integer'],
-                'domains' => ['type' => 'array', 'items' => ['type' => 'string']],
-            ],
-            'required' => ['version', 'domains'],
-        ];
-    }
 }
 ```
 
@@ -153,103 +147,173 @@ Bind the schema when opening the manifest:
 ```php
 $manifest = Manifest::open(base_path('domains.json'), new DomainRegistrySchema);
 
-// If the file doesn't exist, initialize it with schema defaults:
+// If the file does not exist, initialize it with schema defaults:
 $manifest->init();
 ```
 
-### 2. Atomic Mutation Transactions
-
-When multiple CLI workers, background jobs, or AI agents might write to the manifest simultaneously, use `mutate()`:
+Export Draft-07 JSON Schema for IDEs:
 
 ```php
-$manifest->mutate(function (array $data): array {
-    // Modify data safely inside an exclusive OS file lock
-    $data['domains'][] = [
-        'hostname' => 'blog.example.com',
-        'active' => true,
-    ];
+$manifest->exportJsonSchema(base_path('.schemas/domains.schema.json'));
+```
+
+### 2. Centralized Registry & Alias Resolution
+
+Register your manifests during application bootstrapping (e.g. in a service provider):
+
+```php
+use AlexKassel\ManifestEngine\Facades\Manifest;
+use App\Manifests\AppRegistrySchema;
+
+// Register manifest definition
+Manifest::register(
+    name: 'app_registry',
+    filename: 'registry.json',
+    schema: AppRegistrySchema::class,
+    description: 'Core application registry'
+);
+```
+
+Then open it from anywhere in your codebase using the registered alias:
+
+```php
+$registry = Manifest::get('app_registry');
+$registry->set('status', 'active');
+```
+
+Check presence across registered manifests via CLI:
+
+```bash
+php artisan manifest:status
+```
+
+### 3. Batching & Concurrency Best Practices
+
+> [!TIP]
+> Each standalone `set()`, `append()`, or `forget()` call acquires an exclusive lock and performs an atomic write. When making multiple changes, use `batch()` or `mutate()` to run all modifications in a single locked transaction:
+
+```php
+$manifest->batch(function (array $data): array {
+    $data['settings']['theme'] = 'dark';
+    $data['settings']['notifications'] = true;
+    $data['updated_at'] = date('c');
 
     return $data;
 });
 ```
 
-The `mutate()` method:
-1. Opens an exclusive file lock (`LOCK_EX`).
-2. Reads the current on-disk content.
-3. Passes the data to your callback.
-4. Validates the returned data against your schema.
-5. Writes the file and releases the lock automatically.
+### 4. Typed DTO Mapping
 
-### 3. Dependency Injection in Services & Commands
+Hydrate manifest data into typed objects using constructor promotion or the `ManifestDto` contract:
 
 ```php
-namespace App\Services;
+use AlexKassel\ManifestEngine\Contracts\ManifestDto;
 
-use AlexKassel\ManifestEngine\Manifest;
-
-class DomainManager
+class AppConfigDto implements ManifestDto
 {
-    protected Manifest $manifest;
+    public function __construct(
+        public string $name,
+        public int $version = 1,
+    ) {}
 
-    public function __construct()
+    public function toArray(): array
     {
-        $this->manifest = Manifest::open(base_path('domains.json'));
+        return ['name' => $this->name, 'version' => $this->version];
     }
 
-    public function registerDomain(string $hostname): void
+    public static function fromArray(array $data): static
     {
-        $this->manifest->append('domains', [
-            'hostname' => $hostname,
-            'registered_at' => date('c'),
-        ]);
+        return new static(
+            name: (string) ($data['name'] ?? ''),
+            version: (int) ($data['version'] ?? 1),
+        );
     }
 }
+
+// Hydrate from manifest
+$dto = $manifest->toDto(AppConfigDto::class);
+
+// Mutate and save back
+$dto->version++;
+$manifest->saveDto($dto);
 ```
+
+### 5. Optimistic Concurrency Control
+
+Prevent accidental overwrites when multiple external processes or Git branches modify files:
+
+```php
+// Read manifest
+$manifest = Manifest::open(base_path('state.json'));
+
+// If an external process changes state.json before this save completes,
+// a ManifestConcurrentModificationException is thrown:
+$manifest->saveOptimistic($updatedData);
+```
+
+---
+
+## Architecture
+
+ManifestEngine adheres to Single Responsibility (SRP) and clean dependency injection:
+
+* **`StorageDriver` (`AtomicFileStorage`):** Manages file I/O, shared read locks, exclusive mutation locks, and atomic replacement via temporary files.
+* **`ManifestValidator`:** Handles schema validation via Laravel's Validation Factory.
+* **`DtoHydrator`:** Converts manifest payloads into typed objects and serializes them back.
+* **`JsonSchemaCompiler`:** Translates Laravel validation rules into Draft-07 JSON Schema.
+* **`Manifest`:** Expressive document repository focused entirely on querying and mutating state.
+* **`ManifestManager` & `ManifestRegistry`:** Central coordinator for opening arbitrary documents or registered aliases.
 
 ---
 
 ## API Reference
 
-### `Manifest`
+### `Manifest` Document
 
 | Method | Return Type | Description |
 |---|---|---|
 | `Manifest::open(string $path, ?ManifestSchema $schema = null)` | `Manifest` | Instantiate a manifest document handler. |
 | `exists()` | `bool` | Check if the manifest file exists on disk. |
 | `init()` | `self` | Initialize the file with schema defaults if missing. |
-| `load()` | `array` | Read and decode the manifest data into an array. |
-| `save(array $data)` | `void` | Validate and write array data to the manifest file. |
+| `load(bool $forceFresh = false)` | `array` | Read and decode manifest data with shared lock. |
+| `save(array $data)` | `void` | Validate and write array data to the file atomically. |
+| `saveOptimistic(array $data, ?string $hash = null)` | `void` | Write data with concurrency conflict verification. |
 | `get(string $key, mixed $default = null)` | `mixed` | Read a nested value using dot-notation. |
 | `has(string $key)` | `bool` | Check if a nested key exists. |
 | `set(string $key, mixed $value)` | `self` | Set a nested key and persist atomically. |
 | `append(string $key, mixed $value)` | `self` | Append a value to a nested array and persist. |
-| `mutate(callable $callback)` | `array` | Run a locked, atomic read-modify-write transaction. |
+| `forget(string $key)` | `self` | Remove a nested key and persist. |
+| `batch(callable $callback)` | `self` | Run multiple modifications in a single locked transaction. |
+| `mutate(callable $callback)` | `array` | Run an atomic read-modify-write transaction. |
+| `snapshot()` | `self` | Capture an in-memory state snapshot. |
+| `rollback()` | `self` | Restore state from the captured snapshot. |
+| `fresh()` / `reload()` | `self` | Invalidate in-memory cache and re-read from disk. |
+| `toDto(string $dtoClass)` | `object` | Hydrate manifest into a typed DTO object. |
+| `saveDto(object $dto)` | `void` | Save a typed DTO back to the manifest. |
+| `exportJsonSchema(?string $outputPath = null)` | `?array` | Generate and optionally save JSON Schema. |
+
+### `ManifestManager` & Facade
+
+| Method | Return Type | Description |
+|---|---|---|
+| `Manifest::open(string $path, ?ManifestSchema $schema = null)` | `Manifest` | Open an arbitrary manifest file. |
+| `Manifest::get(string $name, ?string $basePath = null)` | `Manifest` | Retrieve and open a registered manifest by alias. |
+| `Manifest::has(string $name)` | `bool` | Check if a manifest alias is registered. |
+| `Manifest::register(...)` | `ManifestRegistry` | Register a manifest definition. |
 
 ---
 
 ## Testing
 
-Run the automated test suite:
+Run the test suite via Composer or PHPUnit:
 
 ```bash
 composer test
-```
-
-Or via direct PHPUnit binary:
-
-```bash
-vendor/bin/phpunit
+# or
+vendor/bin/phpunit packages/alex-kassel/manifest-engine/tests
 ```
 
 ---
-
-## Changelog
-
-Please see [CHANGELOG.md](CHANGELOG.md) for more information on recent changes.
-
-## Contributing
-
-Contributions are welcome! Please review [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ## License
 
