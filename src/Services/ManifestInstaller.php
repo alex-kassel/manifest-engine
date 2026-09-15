@@ -6,12 +6,18 @@ namespace AlexKassel\ManifestEngine\Services;
 
 use AlexKassel\ManifestEngine\DTOs\ManifestDefinition;
 use AlexKassel\ManifestEngine\Manifest;
+use AlexKassel\StubEngine\Services\StubEngine;
 use Illuminate\Filesystem\Filesystem;
 
 class ManifestInstaller
 {
+    public const DEFAULT_STUB_EXTENSION = '.stub';
+
+    public const DEFAULT_STUBS_DIR = 'stubs';
+
     public function __construct(
         protected Filesystem $files = new Filesystem,
+        protected StubEngine $stubEngine = new StubEngine,
     ) {}
 
     /**
@@ -47,33 +53,37 @@ class ManifestInstaller
         // 2. Publish standalone runner if registered
         if ($definition->runnerPath !== null && $this->files->exists($definition->runnerPath)) {
             $runnerFilename = basename($definition->runnerPath);
-            $runnerName = str_ends_with($runnerFilename, '.stub')
-                ? substr($runnerFilename, 0, -5)
+            $runnerName = str_ends_with($runnerFilename, self::DEFAULT_STUB_EXTENSION)
+                ? substr($runnerFilename, 0, -strlen(self::DEFAULT_STUB_EXTENSION))
                 : $runnerFilename;
 
             $targetRunnerPath = $rootPath.DIRECTORY_SEPARATOR.$runnerName;
+            $overrideFile = $rootPath.DIRECTORY_SEPARATOR.self::DEFAULT_STUBS_DIR.DIRECTORY_SEPARATOR.basename($definition->runnerPath);
 
-            if ($this->files->exists($targetRunnerPath) && ! $force) {
-                $steps[] = [
-                    'type' => 'runner',
-                    'status' => 'skipped',
-                    'message' => "Standalone runner [./{$runnerName}] already exists.",
-                ];
-            } else {
-                $content = $this->files->get($definition->runnerPath);
-                $compiled = str_replace(
-                    ['{{ manifestPath }}', '{{ runnerName }}'],
-                    [$definition->filename, $runnerName],
-                    $content
-                );
+            $created = $this->stubEngine->scaffoldFile(
+                sourceFile: $definition->runnerPath,
+                targetFile: $targetRunnerPath,
+                tokens: [
+                    '{{ manifestPath }}' => $definition->filename,
+                    '{{ runnerName }}' => $runnerName,
+                ],
+                overrideFile: $overrideFile,
+                force: $force,
+            );
 
-                $this->files->put($targetRunnerPath, $compiled);
+            if ($created) {
                 @chmod($targetRunnerPath, 0755);
 
                 $steps[] = [
                     'type' => 'runner',
                     'status' => 'created',
                     'message' => "Published standalone executable runner to [./{$runnerName}].",
+                ];
+            } else {
+                $steps[] = [
+                    'type' => 'runner',
+                    'status' => 'skipped',
+                    'message' => "Standalone runner [./{$runnerName}] already exists.",
                 ];
             }
         }

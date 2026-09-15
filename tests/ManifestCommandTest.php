@@ -97,6 +97,48 @@ class ManifestCommandTest extends TestCase
         $this->assertTrue($this->files->exists("{$this->tempDir}/source_runner"));
     }
 
+    public function test_manifest_install_respects_host_override_stub(): void
+    {
+        $srcDir = "{$this->tempDir}/pkg_stubs";
+        $this->files->ensureDirectoryExists($srcDir);
+        $pkgRunner = "{$srcDir}/tool.stub";
+        $this->files->put($pkgRunner, 'package default: {{ manifestPath }}');
+
+        // Host override in stubs/tool.stub
+        $hostStubsDir = "{$this->tempDir}/stubs";
+        $this->files->ensureDirectoryExists($hostStubsDir);
+        $this->files->put("{$hostStubsDir}/tool.stub", 'host overridden runner: {{ manifestPath }}');
+
+        $schema = new class extends BaseSchema
+        {
+            public function defaults(): array
+            {
+                return [];
+            }
+
+            public function rules(): array
+            {
+                return [];
+            }
+        };
+
+        /** @var ManifestRegistry $registry */
+        $registry = app(ManifestRegistry::class);
+        $registry->clear();
+        $registry->register('tool', 'tool.json', $schema, runnerPath: $pkgRunner);
+
+        $installer = app(ManifestInstaller::class);
+        $def = $registry->get('tool');
+        $this->assertNotNull($def);
+
+        $steps = $installer->install($def, $this->tempDir);
+        $this->assertSame('created', $steps[1]['status']);
+
+        $runnerPath = "{$this->tempDir}/tool";
+        $this->assertTrue($this->files->exists($runnerPath));
+        $this->assertSame('host overridden runner: tool.json', $this->files->get($runnerPath));
+    }
+
     public function test_manifest_status_command(): void
     {
         /** @var ManifestRegistry $registry */
