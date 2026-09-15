@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace AlexKassel\ManifestEngine\Contracts;
 
-use AlexKassel\ManifestEngine\Exceptions\ManifestValidationException;
-
 interface ManifestSchema
 {
     /**
@@ -16,11 +14,31 @@ interface ManifestSchema
     public function defaults(): array;
 
     /**
-     * Validate manifest data against schema rules.
+     * Standard Laravel validation rules for manifest data.
+     * Supports dot-notation, wildcards (*), sometimes, nullable, and custom Rule objects.
      *
-     * @param  array<string, mixed>  $data
-     *
-     * @throws ManifestValidationException
+     * @return array<string, mixed>
      */
-    public function validate(array $data, string $path): void;
+    public function rules(): array;
+
+    /**
+     * Custom validation error messages.
+     *
+     * @return array<string, string>
+     */
+    public function messages(): array;
+
+    /**
+     * Custom attribute names for validation errors.
+     *
+     * @return array<string, string>
+     */
+    public function attributes(): array;
+
+    /**
+     * Full JSON Schema (Draft-07) representation for IDE autocomplete and static analysis.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function jsonSchema(): ?array;
 }

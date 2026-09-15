@@ -7,17 +7,28 @@ namespace AlexKassel\ManifestEngine;
 use AlexKassel\ManifestEngine\Contracts\ManifestSchema;
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestNotFoundException;
+use AlexKassel\ManifestEngine\Exceptions\ManifestValidationException;
+use Illuminate\Container\Container;
+use Illuminate\Contracts\Validation\Factory as ValidationFactory;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Arr;
+use Illuminate\Translation\ArrayLoader;
+use Illuminate\Translation\Translator;
+use Illuminate\Validation\Factory;
 use JsonException;
 
 class Manifest
 {
+    protected ?ValidationFactory $validatorFactory = null;
+
     public function __construct(
         public readonly string $path,
         public readonly ?ManifestSchema $schema = null,
         protected Filesystem $files = new Filesystem,
-    ) {}
+        ?ValidationFactory $validatorFactory = null,
+    ) {
+        $this->validatorFactory = $validatorFactory;
+    }
 
     /**
      * Open a manifest document.
@@ -26,8 +37,64 @@ class Manifest
         string $path,
         ?ManifestSchema $schema = null,
         ?Filesystem $files = null,
+        ?ValidationFactory $validatorFactory = null,
     ): self {
-        return new self($path, $schema, $files ?? new Filesystem);
+        return new self($path, $schema, $files ?? new Filesystem, $validatorFactory);
+    }
+
+    /**
+     * Set explicit validation factory.
+     */
+    public function setValidatorFactory(ValidationFactory $factory): self
+    {
+        $this->validatorFactory = $factory;
+
+        return $this;
+    }
+
+    /**
+     * Get or create validation factory.
+     */
+    public function getValidatorFactory(): ValidationFactory
+    {
+        if ($this->validatorFactory !== null) {
+            return $this->validatorFactory;
+        }
+
+        if (class_exists(Container::class) && Container::getInstance()?->bound('validator')) {
+            /** @var ValidationFactory */
+            return Container::getInstance()->make('validator');
+        }
+
+        $loader = new ArrayLoader;
+        $translator = new Translator($loader, 'en');
+
+        return $this->validatorFactory = new Factory($translator);
+    }
+
+    /**
+     * Validate data against the schema rules using Laravel's validator.
+     *
+     * @param  array<string, mixed>  $data
+     *
+     * @throws ManifestValidationException
+     */
+    public function validate(array $data): void
+    {
+        if ($this->schema === null) {
+            return;
+        }
+
+        $validator = $this->getValidatorFactory()->make(
+            $data,
+            $this->schema->rules(),
+            $this->schema->messages(),
+            $this->schema->attributes()
+        );
+
+        if ($validator->fails()) {
+            throw new ManifestValidationException($this->path, $validator->errors()->toArray());
+        }
     }
 
     /**
@@ -81,7 +148,7 @@ class Manifest
         }
 
         if ($this->schema !== null) {
-            $this->schema->validate($data, $this->path);
+            $this->validate($data);
         }
 
         return $data;
@@ -97,7 +164,7 @@ class Manifest
     public function save(array $data): void
     {
         if ($this->schema !== null) {
-            $this->schema->validate($data, $this->path);
+            $this->validate($data);
         }
 
         $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
@@ -107,6 +174,37 @@ class Manifest
 
         $this->files->ensureDirectoryExists(dirname($this->path));
         $this->files->put($this->path, $json."\n", true);
+    }
+
+    /**
+     * Export the schema's JSON Schema to a file or return as an array.
+     *
+     * @return array<string, mixed>|null
+     *
+     * @throws ManifestException
+     */
+    public function exportJsonSchema(?string $outputPath = null): ?array
+    {
+        if ($this->schema === null) {
+            return null;
+        }
+
+        $jsonSchema = $this->schema->jsonSchema();
+        if ($jsonSchema === null) {
+            return null;
+        }
+
+        if ($outputPath !== null) {
+            $encoded = json_encode($jsonSchema, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+            if ($encoded === false) {
+                throw new ManifestException('Failed to serialize JSON Schema for export.');
+            }
+
+            $this->files->ensureDirectoryExists(dirname($outputPath));
+            $this->files->put($outputPath, $encoded."\n", true);
+        }
+
+        return $jsonSchema;
     }
 
     /**
@@ -204,7 +302,7 @@ class Manifest
             }
 
             if ($this->schema !== null) {
-                $this->schema->validate($mutated, $this->path);
+                $this->validate($mutated);
             }
 
             $json = json_encode($mutated, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);

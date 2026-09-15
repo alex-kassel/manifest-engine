@@ -104,17 +104,16 @@ $manifest->mutate(function (array $data): array {
 
 ## Usage & Recipes
 
-### 1. Defining a Schema
+### 1. Defining a Schema with Laravel Validator & JSON Schema
 
-Implement `AlexKassel\ManifestEngine\Contracts\ManifestSchema` to declare defaults and validation:
+Extend `AlexKassel\ManifestEngine\Schemas\BaseSchema` to declare defaults, Laravel validation rules, and IDE `$schema`:
 
 ```php
 namespace App\Manifests;
 
-use AlexKassel\ManifestEngine\Contracts\ManifestSchema;
-use AlexKassel\ManifestEngine\Exceptions\ManifestValidationException;
+use AlexKassel\ManifestEngine\Schemas\BaseSchema;
 
-class DomainRegistrySchema implements ManifestSchema
+class DomainRegistrySchema extends BaseSchema
 {
     public function defaults(): array
     {
@@ -124,21 +123,27 @@ class DomainRegistrySchema implements ManifestSchema
         ];
     }
 
-    public function validate(array $data, string $path): void
+    public function rules(): array
     {
-        $errors = [];
+        return [
+            'version'   => ['required', 'integer'],
+            'domains'   => ['present', 'array'],
+            'domains.*' => ['string'],
+            'meta'      => ['sometimes', 'array'],
+        ];
+    }
 
-        if (! isset($data['version']) || ! is_int($data['version'])) {
-            $errors[] = 'Field [version] must be an integer';
-        }
-
-        if (! isset($data['domains']) || ! is_array($data['domains'])) {
-            $errors[] = 'Field [domains] must be an array';
-        }
-
-        if (! empty($errors)) {
-            throw new ManifestValidationException($path, $errors);
-        }
+    public function jsonSchema(): ?array
+    {
+        return [
+            '$schema' => 'http://json-schema.org/draft-07/schema#',
+            'type' => 'object',
+            'properties' => [
+                'version' => ['type' => 'integer'],
+                'domains' => ['type' => 'array', 'items' => ['type' => 'string']],
+            ],
+            'required' => ['version', 'domains'],
+        ];
     }
 }
 ```

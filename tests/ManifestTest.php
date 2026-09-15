@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace AlexKassel\ManifestEngine\Tests;
 
-use AlexKassel\ManifestEngine\Contracts\ManifestSchema;
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestNotFoundException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestValidationException;
 use AlexKassel\ManifestEngine\Manifest;
+use AlexKassel\ManifestEngine\Schemas\BaseSchema;
 use Illuminate\Filesystem\Filesystem;
 
 class ManifestTest extends TestCase
@@ -46,18 +46,19 @@ class ManifestTest extends TestCase
     public function test_it_initializes_with_schema_defaults(): void
     {
         $path = "{$this->tempDir}/manifest.json";
-        $schema = new class implements ManifestSchema
+        $schema = new class extends BaseSchema
         {
             public function defaults(): array
             {
                 return ['version' => 1, 'items' => []];
             }
 
-            public function validate(array $data, string $path): void
+            public function rules(): array
             {
-                if (! isset($data['version'])) {
-                    throw new ManifestValidationException($path, ['Missing version']);
-                }
+                return [
+                    'version' => ['required', 'integer'],
+                    'items' => ['present', 'array'],
+                ];
             }
         };
 
@@ -104,18 +105,18 @@ class ManifestTest extends TestCase
     public function test_it_validates_schema_and_throws_exception_on_invalid_data(): void
     {
         $path = "{$this->tempDir}/manifest.json";
-        $schema = new class implements ManifestSchema
+        $schema = new class extends BaseSchema
         {
             public function defaults(): array
             {
                 return ['status' => 'active'];
             }
 
-            public function validate(array $data, string $path): void
+            public function rules(): array
             {
-                if (isset($data['status']) && ! in_array($data['status'], ['active', 'paused'], true)) {
-                    throw new ManifestValidationException($path, ["Invalid status: {$data['status']}"]);
-                }
+                return [
+                    'status' => ['required', 'in:active,paused'],
+                ];
             }
         };
 
@@ -123,6 +124,45 @@ class ManifestTest extends TestCase
 
         $this->expectException(ManifestValidationException::class);
         $manifest->save(['status' => 'invalid_value']);
+    }
+
+    public function test_it_exports_json_schema(): void
+    {
+        $path = "{$this->tempDir}/manifest.json";
+        $schemaPath = "{$this->tempDir}/schema.json";
+
+        $schema = new class extends BaseSchema
+        {
+            public function defaults(): array
+            {
+                return ['name' => 'demo'];
+            }
+
+            public function rules(): array
+            {
+                return ['name' => ['required', 'string']];
+            }
+
+            public function jsonSchema(): ?array
+            {
+                return [
+                    '$schema' => 'http://json-schema.org/draft-07/schema#',
+                    'title' => 'DemoSchema',
+                    'type' => 'object',
+                    'properties' => [
+                        'name' => ['type' => 'string'],
+                    ],
+                    'required' => ['name'],
+                ];
+            }
+        };
+
+        $manifest = Manifest::open($path, $schema, $this->files);
+        $exported = $manifest->exportJsonSchema($schemaPath);
+
+        $this->assertIsArray($exported);
+        $this->assertTrue($this->files->exists($schemaPath));
+        $this->assertStringContainsString('DemoSchema', (string) $this->files->get($schemaPath));
     }
 
     public function test_it_throws_when_manifest_not_found_without_schema(): void
