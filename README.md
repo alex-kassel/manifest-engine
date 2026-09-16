@@ -7,14 +7,14 @@
 <p align="center">
   <a href="#why-this-exists">Why This Exists</a> •
   <a href="#key-features">Key Features</a> •
-  <a href="USE-CASES.md">Use Cases</a> •
+  <a href=".dev/use-cases.md">Use Cases</a> •
   <a href="#requirements">Requirements</a> •
   <a href="#installation">Installation</a> •
   <a href="#quickstart">Quickstart</a> •
   <a href="#usage--recipes">Usage & Recipes</a> •
   <a href="#architecture">Architecture</a> •
   <a href="#api-reference">API Reference</a> •
-  <a href="ROADMAP.md">Roadmap</a> •
+  <a href=".dev/roadmap.md">Roadmap</a> •
   <a href="#testing">Testing</a> •
   <a href="LICENSE.md">License</a>
 </p>

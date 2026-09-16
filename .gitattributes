@@ -1,0 +1,11 @@
+* text=auto eol=lf
+*.php text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+
+/tests export-ignore
+/phpunit.xml.dist export-ignore
+/.github export-ignore
+/.editorconfig export-ignore
+/.gitattributes export-ignore
+/.dev export-ignore
