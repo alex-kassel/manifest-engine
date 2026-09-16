@@ -110,7 +110,7 @@ class AtomicFileStorageTest extends TestCase
     public function test_lock_timeout_throws_exception_when_file_is_locked(): void
     {
         $customLocksDir = "{$this->tempDir}/timeout-locks";
-        $storage = new class($this->files, $customLocksDir) extends AtomicFileStorage
+        $storage = new class($this->files, locksDirectory: $customLocksDir) extends AtomicFileStorage
         {
             public const DEFAULT_LOCK_TIMEOUT_SECONDS = 1;
 

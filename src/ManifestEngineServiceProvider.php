@@ -22,29 +22,12 @@ class ManifestEngineServiceProvider extends ServiceProvider
 {
     public const FACADE_ACCESSOR = 'manifest.engine';
 
-    public const CONFIG_NAME = 'manifest-engine';
-
-    public const CONFIG_PUBLISH_TAG = 'manifest-engine-config';
-
-    /**
-     * @var array<string, mixed>
-     */
-    public const DEFAULT_EMPTY_MANIFESTS = [];
-
-    public const DEFAULT_EMPTY_FILENAME = '';
-
     /**
      * Register any application services.
      */
     public function register(): void
     {
-        $this->mergeConfigFrom(
-            __DIR__.'/../config/manifest-engine.php',
-            self::CONFIG_NAME
-        );
-
         $this->app->singleton(StorageDriver::class, function ($app) {
-            $locksDir = config('manifest-engine.locks_directory');
             $lockProvider = null;
 
             if ($app->bound('cache')) {
@@ -56,7 +39,6 @@ class ManifestEngineServiceProvider extends ServiceProvider
 
             return new AtomicFileStorage(
                 files: $app->make(Filesystem::class),
-                locksDirectory: is_string($locksDir) ? $locksDir : null,
                 lockProvider: $lockProvider,
             );
         });
@@ -111,50 +93,12 @@ class ManifestEngineServiceProvider extends ServiceProvider
     public function boot(): void
     {
         if ($this->app->runningInConsole()) {
-            $this->publishes([
-                __DIR__.'/../config/manifest-engine.php' => config_path('manifest-engine.php'),
-            ], self::CONFIG_PUBLISH_TAG);
-
             $this->commands([
                 ManifestStatusCommand::class,
                 ManifestValidateCommand::class,
                 ManifestSchemaCommand::class,
                 ManifestMakeCommand::class,
             ]);
-        }
-
-        $this->bootConfiguredManifests();
-    }
-
-    /**
-     * Automatically register manifests configured in config/manifest-engine.php.
-     */
-    protected function bootConfiguredManifests(): void
-    {
-        /** @var array<string, array<string, mixed>> $manifests */
-        $manifests = config('manifest-engine.manifests', self::DEFAULT_EMPTY_MANIFESTS);
-        if (empty($manifests) || ! is_array($manifests)) {
-            return;
-        }
-
-        /** @var ManifestRegistry $registry */
-        $registry = $this->app->make(ManifestRegistry::class);
-
-        foreach ($manifests as $name => $config) {
-            $filename = (string) ($config['filename'] ?? self::DEFAULT_EMPTY_FILENAME);
-            $schema = $config['schema'] ?? null;
-            $description = isset($config['description']) ? (string) $config['description'] : null;
-            $metadata = isset($config['metadata']) && is_array($config['metadata']) ? $config['metadata'] : [];
-
-            if ($filename !== self::DEFAULT_EMPTY_FILENAME && $schema !== null) {
-                $registry->register(
-                    name: $name,
-                    filename: $filename,
-                    schema: $schema,
-                    description: $description,
-                    metadata: $metadata
-                );
-            }
         }
     }
 }

@@ -32,8 +32,8 @@ class AtomicFileStorage implements StorageDriver
 
     public function __construct(
         protected readonly Filesystem $files = new Filesystem,
-        protected ?string $locksDirectory = null,
         protected ?LockProvider $lockProvider = null,
+        protected ?string $locksDirectory = null,
     ) {
         $this->locksDirectory = $locksDirectory ?? (function_exists('storage_path')
             ? storage_path('framework'.DIRECTORY_SEPARATOR.self::DEFAULT_LOCKS_DIR_SUBFOLDER)
