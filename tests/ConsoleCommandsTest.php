@@ -180,4 +180,80 @@ class ConsoleCommandsTest extends TestCase
             ->expectsOutputToContain('Please specify a manifest alias name or file path')
             ->assertFailed();
     }
+
+    public function test_manifest_make_command_rejects_path_traversal(): void
+    {
+        $this->artisan('manifest:make', ['name' => '../../evil.json', '--no-interaction' => true])
+            ->expectsOutputToContain('Path traversal is not allowed in manifest path.')
+            ->assertFailed();
+    }
+
+    public function test_manifest_make_command_force_overwrites_existing_file(): void
+    {
+        /** @var ManifestManager $manager */
+        $manager = app(ManifestManager::class);
+        $manager->registry()->clear();
+
+        $schema = new class extends BaseSchema
+        {
+            public function defaults(): array
+            {
+                return ['v' => 2];
+            }
+
+            public function rules(): array
+            {
+                return ['v' => 'required|integer'];
+            }
+        };
+
+        $manager->registry()->register('force_test', 'force_test.json', $schema);
+        $manifest = $manager->get('force_test');
+
+        // Create initial
+        $this->files->put($manifest->path, json_encode(['v' => 1]));
+
+        // Fail without force
+        $this->artisan('manifest:make force_test')
+            ->assertFailed();
+
+        // Succeed with force
+        $this->artisan('manifest:make force_test --force')
+            ->assertSuccessful();
+
+        $this->assertSame(['v' => 2], $manifest->fresh()->all());
+
+        if ($this->files->exists($manifest->path)) {
+            $this->files->delete($manifest->path);
+        }
+    }
+
+    public function test_manifest_status_command_displays_table(): void
+    {
+        /** @var ManifestManager $manager */
+        $manager = app(ManifestManager::class);
+        $manager->registry()->clear();
+
+        $this->artisan('manifest:status')
+            ->expectsOutputToContain('No manifest definitions are registered in this application.')
+            ->assertSuccessful();
+
+        $schema = new class extends BaseSchema
+        {
+            public function defaults(): array
+            {
+                return ['status' => 'ok'];
+            }
+
+            public function rules(): array
+            {
+                return [];
+            }
+        };
+
+        $manager->registry()->register('app_status', 'app_status.json', $schema, description: 'Test desc');
+
+        $this->artisan('manifest:status')
+            ->assertSuccessful();
+    }
 }

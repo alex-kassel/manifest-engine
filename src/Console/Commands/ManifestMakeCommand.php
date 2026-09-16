@@ -19,6 +19,8 @@ class ManifestMakeCommand extends Command
 
     public const MISSING_NAME_MESSAGE = 'Please specify a manifest alias name or file path to initialize.';
 
+    public const PATH_TRAVERSAL_ERROR = 'Path traversal is not allowed in manifest path.';
+
     public const PROMPT_TARGET_LABEL = 'Enter the manifest alias name or file path to initialize:';
 
     public const PROMPT_CUSTOM_PATH_LABEL = 'Enter relative file path (e.g. workspace.json):';
@@ -88,6 +90,12 @@ class ManifestMakeCommand extends Command
             return self::FAILURE;
         }
 
+        if (str_contains($target, '..')) {
+            $this->error(self::PATH_TRAVERSAL_ERROR);
+
+            return self::FAILURE;
+        }
+
         $def = $registry->get($target);
 
         if ($def !== null) {
@@ -99,16 +107,17 @@ class ManifestMakeCommand extends Command
             $manifest = $this->manager->open($fullPath);
         }
 
-        if ($manifest->exists() && ! $this->option('force')) {
-            $this->warn("Manifest file already exists at [{$manifest->path}]. Use --force to overwrite.");
+        if ($manifest->exists()) {
+            if (! $this->option('force')) {
+                $this->warn("Manifest file already exists at [{$manifest->path}]. Use --force to overwrite.");
 
-            return self::FAILURE;
-        }
+                return self::FAILURE;
+            }
 
-        $manifest->init();
-        if ($this->option('force') && $manifest->exists()) {
             $initialData = $manifest->schema !== null ? $manifest->schema->defaults() : self::DEFAULT_EMPTY_DATA;
             $manifest->save($initialData);
+        } else {
+            $manifest->init();
         }
 
         $this->info("Manifest initialized successfully at [{$manifest->path}].");

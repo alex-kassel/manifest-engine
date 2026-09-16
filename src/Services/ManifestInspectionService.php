@@ -10,22 +10,17 @@ use AlexKassel\ManifestEngine\Exceptions\ManifestException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestValidationException;
 use AlexKassel\ManifestEngine\ManifestManager;
 use Illuminate\Filesystem\Filesystem;
+use Illuminate\Support\Number;
 
 class ManifestInspectionService
 {
-    public const BYTES_PER_KB = 1024;
-
-    public const DECIMAL_PRECISION = 1;
-
     public const DATE_FORMAT = 'Y-m-d H:i:s';
-
-    public const SUFFIX_BYTES = ' B';
-
-    public const SUFFIX_KILOBYTES = ' KB';
 
     public const DEFAULT_BASE_DIR = '.';
 
     public const MISSING_FILE_MESSAGE = 'File does not exist on disk.';
+
+    public const DECIMAL_PRECISION = 1;
 
     public function __construct(
         protected readonly ManifestManager $manager,
@@ -129,7 +124,7 @@ class ManifestInspectionService
                 $reports[$name] = new ManifestValidationReport(
                     name: $name,
                     filename: $def->filename,
-                    path: $manifest->path ?? $def->filename,
+                    path: $manifest->path,
                     exists: false,
                     isValid: false,
                     errorMessage: $e->getMessage(),
@@ -141,16 +136,10 @@ class ManifestInspectionService
     }
 
     /**
-     * Format bytes into a human-readable string.
+     * Format bytes into a human-readable string using Laravel Number helper.
      */
     public function formatBytes(int $bytes): string
     {
-        if ($bytes < self::BYTES_PER_KB) {
-            return $bytes.self::SUFFIX_BYTES;
-        }
-
-        $kb = round($bytes / self::BYTES_PER_KB, self::DECIMAL_PRECISION);
-
-        return $kb.self::SUFFIX_KILOBYTES;
+        return Number::fileSize($bytes, precision: $bytes < 1024 ? 0 : self::DECIMAL_PRECISION);
     }
 }

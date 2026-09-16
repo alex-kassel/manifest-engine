@@ -8,6 +8,11 @@ use AlexKassel\ManifestEngine\Contracts\ManifestSchema;
 
 abstract class BaseSchema implements ManifestSchema
 {
+    /**
+     * @var array<string, string>
+     */
+    public const DEFAULT_EMPTY_ARRAY = [];
+
     protected ?JsonSchemaCompiler $schemaCompiler = null;
 
     /**
@@ -25,7 +30,7 @@ abstract class BaseSchema implements ManifestSchema
      */
     public function messages(): array
     {
-        return [];
+        return self::DEFAULT_EMPTY_ARRAY;
     }
 
     /**
@@ -33,7 +38,7 @@ abstract class BaseSchema implements ManifestSchema
      */
     public function attributes(): array
     {
-        return [];
+        return self::DEFAULT_EMPTY_ARRAY;
     }
 
     /**

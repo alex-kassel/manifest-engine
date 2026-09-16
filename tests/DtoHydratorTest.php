@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace AlexKassel\ManifestEngine\Tests;
 
-use AlexKassel\ManifestEngine\Hydration\ArrayOf;
+use AlexKassel\ManifestEngine\Contracts\ManifestDto;
 use AlexKassel\ManifestEngine\Hydration\DtoHydrator;
 
 class SampleSimpleDto
@@ -109,11 +109,26 @@ class SampleItemDto
     ) {}
 }
 
-class SampleOrderDto
+class SampleOrderDto implements ManifestDto
 {
     public function __construct(
         public string $orderId,
-        #[ArrayOf(SampleItemDto::class)]
         public array $items = [],
     ) {}
+
+    public static function fromArray(array $data): static
+    {
+        return new static(
+            orderId: (string) ($data['orderId'] ?? ''),
+            items: array_map(fn ($item) => $item instanceof SampleItemDto ? $item : new SampleItemDto($item['sku'], $item['qty']), $data['items'] ?? []),
+        );
+    }
+
+    public function toArray(): array
+    {
+        return [
+            'orderId' => $this->orderId,
+            'items' => array_map(fn (SampleItemDto $item) => ['sku' => $item->sku, 'qty' => $item->qty], $this->items),
+        ];
+    }
 }

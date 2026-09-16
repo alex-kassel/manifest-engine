@@ -4,9 +4,6 @@ declare(strict_types=1);
 
 namespace AlexKassel\ManifestEngine\Schemas;
 
-use BackedEnum;
-use Illuminate\Validation\Rules\Enum;
-use ReflectionProperty;
 use Stringable;
 
 class JsonSchemaCompiler
@@ -116,7 +113,7 @@ class JsonSchemaCompiler
     }
 
     /**
-     * Normalize string, object, or array rules into a flat array of rule strings or rule objects.
+     * Normalize string, object, or array rules into a flat array of rule strings.
      *
      * @return array<int, mixed>
      */
@@ -126,20 +123,14 @@ class JsonSchemaCompiler
             return explode(self::RULE_DELIMITER, $rules);
         }
 
-        if ($rules instanceof Enum) {
-            return [$rules];
-        }
-
         if ($rules instanceof Stringable || (is_object($rules) && method_exists($rules, '__toString'))) {
-            return explode(self::RULE_DELIMITER, (string) $rules);
+            return [(string) $rules];
         }
 
         if (is_array($rules)) {
             $normalized = [];
             foreach ($rules as $rule) {
                 if (is_string($rule)) {
-                    $normalized[] = $rule;
-                } elseif ($rule instanceof Enum) {
                     $normalized[] = $rule;
                 } elseif ($rule instanceof Stringable || (is_object($rule) && method_exists($rule, '__toString'))) {
                     $normalized[] = (string) $rule;
@@ -232,18 +223,6 @@ class JsonSchemaCompiler
     protected function populatePropertySchema(array &$prop, array $rules): void
     {
         foreach ($rules as $rule) {
-            if ($rule instanceof Enum) {
-                $refProp = new ReflectionProperty($rule, 'type');
-                $enumClass = (string) $refProp->getValue($rule);
-                if (enum_exists($enumClass)) {
-                    $cases = array_map(static fn ($case) => $case instanceof BackedEnum ? $case->value : $case->name, $enumClass::cases());
-                    $prop['enum'] = $cases;
-                    $prop['type'] = is_int($cases[0] ?? null) ? self::TYPE_INTEGER : self::TYPE_STRING;
-                }
-
-                continue;
-            }
-
             if (! is_string($rule)) {
                 continue;
             }
@@ -282,7 +261,13 @@ class JsonSchemaCompiler
                 $prop['type'] ??= self::TYPE_STRING;
             } elseif (str_starts_with($rule, self::RULE_IN_PREFIX)) {
                 $values = explode(self::VALUE_DELIMITER, substr($rule, strlen(self::RULE_IN_PREFIX)));
-                $prop['enum'] = array_values(array_map(static fn (string $val): string => trim(trim($val), "\"'"), $values));
+                $enum = array_values(array_map(static fn (string $val): string => trim(trim($val), "\"'"), $values));
+                $prop['enum'] = $enum;
+                if (! isset($prop['type'])) {
+                    $prop['type'] = is_numeric($enum[0] ?? null) && ! str_contains((string) ($enum[0] ?? ''), '.')
+                        ? self::TYPE_INTEGER
+                        : self::TYPE_STRING;
+                }
             } elseif (str_starts_with($rule, self::RULE_MIN_PREFIX)) {
                 $val = substr($rule, strlen(self::RULE_MIN_PREFIX));
                 if (is_numeric($val)) {

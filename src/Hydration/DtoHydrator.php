@@ -13,8 +13,6 @@ use DateTimeInterface;
 use JsonSerializable;
 use ReflectionClass;
 use ReflectionNamedType;
-use ReflectionParameter;
-use ReflectionProperty;
 use ReflectionType;
 use Throwable;
 
@@ -24,8 +22,6 @@ class DtoHydrator implements DtoHydratorInterface
      * @var array<string, mixed>
      */
     public const DEFAULT_EMPTY_SERIALIZED_DATA = [];
-
-    public const DOCBLOCK_ARRAY_PATTERN = '/@(?:var|param)\s+(?:array<([a-zA-Z0-9_\\\\]+)>|([a-zA-Z0-9_\\\\]+)\[\])/';
 
     /**
      * Hydrate raw array data into a typed DTO object.
@@ -59,7 +55,7 @@ class DtoHydrator implements DtoHydratorInterface
                 foreach ($data as $key => $value) {
                     if (property_exists($dto, $key)) {
                         $propRef = $reflection->hasProperty($key) ? $reflection->getProperty($key) : null;
-                        $dto->{$key} = $this->castValue($value, $propRef?->getType(), $propRef);
+                        $dto->{$key} = $this->castValue($value, $propRef?->getType());
                     }
                 }
 
@@ -70,10 +66,9 @@ class DtoHydrator implements DtoHydratorInterface
             $args = [];
             foreach ($constructor->getParameters() as $param) {
                 $name = $param->getName();
-                $propRef = $reflection->hasProperty($name) ? $reflection->getProperty($name) : null;
 
                 if (array_key_exists($name, $data)) {
-                    $args[$name] = $this->castValue($data[$name], $param->getType(), $param, $propRef);
+                    $args[$name] = $this->castValue($data[$name], $param->getType());
                 } elseif ($param->isDefaultValueAvailable()) {
                     $args[$name] = $param->getDefaultValue();
                 }
@@ -87,30 +82,12 @@ class DtoHydrator implements DtoHydratorInterface
     }
 
     /**
-     * Cast a raw value according to reflection type, BackedEnum, collection attribute, or DateTime.
+     * Cast a raw value according to reflection type, BackedEnum, or DateTime.
      */
-    protected function castValue(
-        mixed $value,
-        ?ReflectionType $type,
-        ReflectionParameter|ReflectionProperty|null $reflector = null,
-        ?ReflectionProperty $companionProperty = null,
-    ): mixed {
+    protected function castValue(mixed $value, ?ReflectionType $type): mixed
+    {
         if ($value === null) {
             return null;
-        }
-
-        // Handle typed nested array collections (via #[ArrayOf] or PHPDoc)
-        if (is_array($value)) {
-            $itemClass = $this->resolveCollectionItemClass($reflector, $companionProperty);
-            if ($itemClass !== null && class_exists($itemClass)) {
-                return array_map(function ($item) use ($itemClass) {
-                    if (is_array($item)) {
-                        return $this->hydrate($itemClass, $item);
-                    }
-
-                    return $item;
-                }, $value);
-            }
         }
 
         if (! ($type instanceof ReflectionNamedType) || $type->isBuiltin()) {
@@ -136,45 +113,6 @@ class DtoHydrator implements DtoHydratorInterface
         }
 
         return $value;
-    }
-
-    /**
-     * Resolve target item class for an array collection using attributes or docblock comments.
-     *
-     * @return class-string|null
-     */
-    protected function resolveCollectionItemClass(
-        ReflectionParameter|ReflectionProperty|null $reflector,
-        ?ReflectionProperty $companion = null,
-    ): ?string {
-        foreach (array_filter([$reflector, $companion]) as $ref) {
-            $attributes = $ref->getAttributes(ArrayOf::class);
-            if (! empty($attributes)) {
-                /** @var ArrayOf $instance */
-                $instance = $attributes[0]->newInstance();
-
-                return $instance->class;
-            }
-
-            if (method_exists($ref, 'getDocComment')) {
-                $docComment = $ref->getDocComment();
-                if (is_string($docComment) && preg_match(self::DOCBLOCK_ARRAY_PATTERN, $docComment, $matches)) {
-                    $target = $matches[1] ?: $matches[2];
-                    if (class_exists($target)) {
-                        return $target;
-                    }
-
-                    // Try resolving in same declaring namespace
-                    $declaringClass = $ref->getDeclaringClass();
-                    $namespaced = $declaringClass->getNamespaceName().'\\'.$target;
-                    if (class_exists($namespaced)) {
-                        return $namespaced;
-                    }
-                }
-            }
-        }
-
-        return null;
     }
 
     /**
