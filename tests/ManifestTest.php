@@ -10,7 +10,6 @@ use AlexKassel\ManifestEngine\Events\ManifestOpened;
 use AlexKassel\ManifestEngine\Events\ManifestSaved;
 use AlexKassel\ManifestEngine\Events\ManifestSaving;
 use AlexKassel\ManifestEngine\Events\ManifestValidationFailed;
-use AlexKassel\ManifestEngine\Exceptions\ManifestConcurrentModificationException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestNotFoundException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestValidationException;
@@ -18,7 +17,6 @@ use AlexKassel\ManifestEngine\Manifest;
 use AlexKassel\ManifestEngine\Schemas\BaseSchema;
 use Illuminate\Events\Dispatcher;
 use Illuminate\Filesystem\Filesystem;
-use RuntimeException;
 
 class TestManifestDto implements ManifestDto
 {
@@ -147,13 +145,13 @@ class ManifestTest extends TestCase
         $this->assertSame('External Update', $manifest->get('title'));
     }
 
-    public function test_it_batches_multiple_mutations(): void
+    public function test_it_mutates_state_atomically(): void
     {
         $path = "{$this->tempDir}/manifest.json";
         $this->files->put($path, json_encode(['counter' => 0, 'status' => 'pending']));
 
         $manifest = Manifest::open($path, files: $this->files);
-        $manifest->batch(function (array $data): array {
+        $manifest->mutate(function (array $data): array {
             $data['counter'] = 42;
             $data['status'] = 'completed';
 
@@ -324,56 +322,6 @@ class ManifestTest extends TestCase
         $manifest->save(['key' => 'manual_save']);
         $this->assertContains('saving', $eventsDispatched);
         $this->assertContains('saved', $eventsDispatched);
-    }
-
-    public function test_it_captures_snapshot_and_rolls_back(): void
-    {
-        $path = "{$this->tempDir}/manifest.json";
-        $this->files->put($path, json_encode(['stage' => 'stable']));
-
-        $manifest = Manifest::open($path, files: $this->files);
-        $manifest->snapshot();
-
-        $manifest->set('stage', 'broken');
-        $this->assertSame('broken', $manifest->get('stage'));
-
-        $manifest->rollback();
-        $this->assertSame('stable', $manifest->get('stage'));
-    }
-
-    public function test_it_auto_rolls_back_memory_cache_on_mutation_exception(): void
-    {
-        $path = "{$this->tempDir}/manifest.json";
-        $this->files->put($path, json_encode(['counter' => 10]));
-
-        $manifest = Manifest::open($path, files: $this->files);
-
-        try {
-            $manifest->mutate(function (array $data): array {
-                $data['counter'] = 999;
-                throw new RuntimeException('Intentional crash');
-            });
-        } catch (RuntimeException) {
-            // Expected
-        }
-
-        // Memory cache must still be 10, not 999
-        $this->assertSame(10, $manifest->get('counter'));
-    }
-
-    public function test_it_saves_optimistically_and_throws_on_conflict(): void
-    {
-        $path = "{$this->tempDir}/manifest.json";
-        $this->files->put($path, json_encode(['version' => 1]));
-
-        $manifest = Manifest::open($path, files: $this->files);
-        $this->assertSame(1, $manifest->get('version'));
-
-        // Modify file externally (simulating another agent or git pull)
-        $this->files->put($path, json_encode(['version' => 2]));
-
-        $this->expectException(ManifestConcurrentModificationException::class);
-        $manifest->saveOptimistic(['version' => 3]);
     }
 
     public function test_it_throws_when_manifest_not_found_without_schema(): void

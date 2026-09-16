@@ -5,24 +5,22 @@ declare(strict_types=1);
 namespace AlexKassel\ManifestEngine;
 
 use AlexKassel\ManifestEngine\Contracts\ManifestSchema;
-use AlexKassel\ManifestEngine\Contracts\StorageDriver;
 use AlexKassel\ManifestEngine\Events\ManifestMutated;
 use AlexKassel\ManifestEngine\Events\ManifestOpened;
 use AlexKassel\ManifestEngine\Events\ManifestSaved;
 use AlexKassel\ManifestEngine\Events\ManifestSaving;
-use AlexKassel\ManifestEngine\Exceptions\ManifestConcurrentModificationException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestNotFoundException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestValidationException;
 use AlexKassel\ManifestEngine\Hydration\DtoHydrator;
-use AlexKassel\ManifestEngine\Storage\AtomicFileStorage;
 use AlexKassel\ManifestEngine\Validation\ManifestValidator;
+use Illuminate\Cache\FileStore;
+use Illuminate\Container\Container;
+use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Events\Dispatcher;
-use Illuminate\Contracts\Validation\Factory as ValidationFactory;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Arr;
 use JsonException;
-use Throwable;
 
 class Manifest
 {
@@ -30,9 +28,17 @@ class Manifest
 
     public const JSON_DECODE_DEPTH = 512;
 
-    public const DEFAULT_EMPTY_CONTENT = '';
-
     public const NEWLINE = "\n";
+
+    public const DEFAULT_LOCK_TTL_SECONDS = 30;
+
+    public const DEFAULT_LOCK_TIMEOUT_SECONDS = 10;
+
+    public const DEFAULT_HASH_ALGO = 'sha1';
+
+    public const LOCK_KEY_PREFIX = 'manifest:';
+
+    public const FALLBACK_LOCK_FOLDER = 'manifest-locks';
 
     /**
      * @var array<string, mixed>
@@ -52,28 +58,13 @@ class Manifest
     protected ?array $data = null;
 
     /**
-     * In-memory snapshot for rollback.
-     *
-     * @var array<string, mixed>|null
-     */
-    protected ?array $snapshot = null;
-
-    /**
      * Indicates whether in-memory data has unpersisted changes.
      */
     protected bool $isDirty = false;
 
-    /**
-     * File modification time recorded at last load.
-     */
-    protected ?int $lastLoadedMtime = null;
+    protected Filesystem $files;
 
-    /**
-     * SHA-1 hash of the file content at last load.
-     */
-    protected ?string $loadedHash = null;
-
-    protected StorageDriver $storage;
+    protected LockProvider $lockProvider;
 
     protected ManifestValidator $validator;
 
@@ -82,13 +73,15 @@ class Manifest
     public function __construct(
         public readonly string $path,
         public readonly ?ManifestSchema $schema = null,
-        ?StorageDriver $storage = null,
+        ?Filesystem $files = null,
+        ?LockProvider $lockProvider = null,
         ?ManifestValidator $validator = null,
         ?DtoHydrator $hydrator = null,
         protected ?Dispatcher $events = null,
     ) {
-        $this->storage = $storage ?? new AtomicFileStorage;
-        $this->validator = $validator ?? ManifestValidator::createStandalone($this->events);
+        $this->files = $files ?? new Filesystem;
+        $this->lockProvider = $lockProvider ?? $this->resolveDefaultLockProvider();
+        $this->validator = $validator ?? $this->resolveDefaultValidator();
         $this->hydrator = $hydrator ?? new DtoHydrator;
 
         $this->dispatch(new ManifestOpened($this->path));
@@ -100,23 +93,51 @@ class Manifest
     public static function open(
         string $path,
         ?ManifestSchema $schema = null,
-        StorageDriver|Filesystem|null $storage = null,
+        ?Filesystem $files = null,
+        ?LockProvider $lockProvider = null,
         ?ManifestValidator $validator = null,
         ?DtoHydrator $hydrator = null,
         ?Dispatcher $events = null,
-        ?Filesystem $files = null,
-        ?ValidationFactory $validatorFactory = null,
     ): self {
-        return ManifestFactory::create(
+        return new self(
             path: $path,
             schema: $schema,
-            storage: $storage,
+            files: $files,
+            lockProvider: $lockProvider,
             validator: $validator,
             hydrator: $hydrator,
             events: $events,
-            files: $files,
-            validationFactory: $validatorFactory,
         );
+    }
+
+    /**
+     * Resolve default lock provider from container or fallback to FileStore.
+     */
+    protected function resolveDefaultLockProvider(): LockProvider
+    {
+        if (class_exists(Container::class)) {
+            $container = Container::getInstance();
+            if ($container !== null && $container->bound('cache')) {
+                $store = $container->make('cache')->store()->getStore();
+                if ($store instanceof LockProvider) {
+                    return $store;
+                }
+            }
+        }
+
+        $locksDir = function_exists('storage_path')
+            ? storage_path('framework'.DIRECTORY_SEPARATOR.self::FALLBACK_LOCK_FOLDER)
+            : sys_get_temp_dir().DIRECTORY_SEPARATOR.self::FALLBACK_LOCK_FOLDER;
+
+        return new FileStore($this->files, $locksDir);
+    }
+
+    /**
+     * Resolve default validator instance.
+     */
+    protected function resolveDefaultValidator(): ManifestValidator
+    {
+        return ManifestValidator::createStandalone($this->events);
     }
 
     /**
@@ -140,11 +161,11 @@ class Manifest
     }
 
     /**
-     * Set explicit storage driver.
+     * Set explicit lock provider.
      */
-    public function setStorage(StorageDriver $storage): self
+    public function setLockProvider(LockProvider $lockProvider): self
     {
-        $this->storage = $storage;
+        $this->lockProvider = $lockProvider;
 
         return $this;
     }
@@ -188,23 +209,19 @@ class Manifest
      */
     public function exists(): bool
     {
-        return $this->storage->exists($this->path);
+        return $this->files->exists($this->path);
     }
 
     /**
-     * Calculate SHA-1 hash of the manifest file on disk.
+     * Calculate hash of the manifest file on disk.
      */
-    public function hash(): ?string
+    public function hash(string $algorithm = self::DEFAULT_HASH_ALGO): ?string
     {
-        return $this->storage->hash($this->path);
-    }
+        if (! $this->exists()) {
+            return null;
+        }
 
-    /**
-     * Get SHA-1 hash of the file as recorded during the last load.
-     */
-    public function loadedHash(): ?string
-    {
-        return $this->loadedHash;
+        return $this->files->hash($this->path, $algorithm);
     }
 
     /**
@@ -216,32 +233,6 @@ class Manifest
             $initialData = $this->schema !== null ? $this->schema->defaults() : self::DEFAULT_EMPTY_DATA;
             $this->save($initialData);
         }
-
-        return $this;
-    }
-
-    /**
-     * Capture an in-memory snapshot of current manifest data for potential rollback.
-     */
-    public function snapshot(): self
-    {
-        $this->snapshot = $this->load();
-
-        return $this;
-    }
-
-    /**
-     * Rollback manifest state to the last captured snapshot.
-     *
-     * @throws ManifestException
-     */
-    public function rollback(): self
-    {
-        if ($this->snapshot === null) {
-            throw new ManifestException("No snapshot available to rollback manifest [{$this->path}].");
-        }
-
-        $this->save($this->snapshot);
 
         return $this;
     }
@@ -260,8 +251,6 @@ class Manifest
     public function fresh(): self
     {
         $this->data = null;
-        $this->loadedHash = null;
-        $this->lastLoadedMtime = null;
         $this->isDirty = false;
         $this->load(forceFresh: true);
 
@@ -277,7 +266,7 @@ class Manifest
     }
 
     /**
-     * Load manifest content as an array with concurrency shared lock protection.
+     * Load manifest content as an array with shared lock protection.
      *
      * @return array<string, mixed>
      *
@@ -287,23 +276,11 @@ class Manifest
     public function load(bool $forceFresh = false): array
     {
         if (! $forceFresh && $this->data !== null) {
-            if ($this->isDirty) {
-                return $this->data;
-            }
-
-            if ($this->exists()) {
-                clearstatcache(true, $this->path);
-                $mtime = @filemtime($this->path);
-                if ($mtime !== false && $mtime === $this->lastLoadedMtime) {
-                    return $this->data;
-                }
-            }
+            return $this->data;
         }
 
         if (! $this->exists()) {
             if ($this->schema !== null) {
-                $this->loadedHash = null;
-                $this->lastLoadedMtime = null;
                 $this->isDirty = false;
 
                 return $this->data = $this->schema->defaults();
@@ -312,20 +289,9 @@ class Manifest
             throw new ManifestNotFoundException($this->path);
         }
 
-        $content = $this->storage->readLocked($this->path);
-        $this->loadedHash = sha1($content);
-        $this->lastLoadedMtime = @filemtime($this->path) ?: null;
-        $this->isDirty = false;
-
-        if (trim($content) === self::DEFAULT_EMPTY_CONTENT) {
-            $data = $this->schema !== null ? $this->schema->defaults() : self::DEFAULT_EMPTY_DATA;
-
-            return $this->data = $data;
-        }
-
         try {
             /** @var array<string, mixed> $data */
-            $data = json_decode($content, true, self::JSON_DECODE_DEPTH, JSON_THROW_ON_ERROR);
+            $data = $this->files->json($this->path, flags: JSON_THROW_ON_ERROR, lock: true);
         } catch (JsonException $e) {
             throw new ManifestException("Malformed JSON in manifest [{$this->path}]: {$e->getMessage()}", 0, $e);
         }
@@ -334,11 +300,13 @@ class Manifest
             $this->validate($data);
         }
 
+        $this->isDirty = false;
+
         return $this->data = $data;
     }
 
     /**
-     * Save data directly into manifest file atomically.
+     * Save data directly into manifest file atomically using Filesystem::replace.
      *
      * @param  array<string, mixed>|null  $data
      *
@@ -359,13 +327,10 @@ class Manifest
             throw new ManifestException("Failed to serialize manifest JSON for [{$this->path}].");
         }
 
-        $payload = $json.self::NEWLINE;
-        $this->storage->writeAtomic($this->path, $payload);
+        $this->files->ensureDirectoryExists(dirname($this->path));
+        $this->files->replace($this->path, $json.self::NEWLINE);
 
         $this->data = $payloadData;
-        $this->loadedHash = sha1($payload);
-        clearstatcache(true, $this->path);
-        $this->lastLoadedMtime = @filemtime($this->path) ?: null;
         $this->isDirty = false;
 
         $this->dispatch(new ManifestSaved($this->path, $payloadData));
@@ -374,108 +339,59 @@ class Manifest
     }
 
     /**
-     * Save data with optimistic concurrency verification.
+     * Mutate manifest data inside an atomic lock transaction.
      *
-     * @param  array<string, mixed>|null  $data
-     *
-     * @throws ManifestConcurrentModificationException
-     * @throws ManifestException
-     */
-    public function saveOptimistic(?array $data = null, ?string $expectedHash = null): self
-    {
-        $expected = $expectedHash ?? $this->loadedHash;
-        $currentHash = $this->hash();
-
-        if ($expected !== null && $currentHash !== null && $currentHash !== $expected) {
-            throw new ManifestConcurrentModificationException($this->path, $currentHash, $expected);
-        }
-
-        return $this->save($data);
-    }
-
-    /**
-     * Export the schema's JSON Schema to a file or return as an array.
-     *
-     * @return array<string, mixed>|null
+     * @param  callable(array<string, mixed>): array<string, mixed>  $callback
+     * @return array<string, mixed>
      *
      * @throws ManifestException
      */
-    public function exportJsonSchema(?string $outputPath = null): ?array
+    public function mutate(callable $callback): array
     {
-        if ($this->schema === null) {
-            return null;
-        }
+        $canonicalPath = $this->canonicalPath();
+        $lockKey = self::LOCK_KEY_PREFIX.hash('sha256', $canonicalPath);
+        $lock = $this->lockProvider->lock($lockKey, self::DEFAULT_LOCK_TTL_SECONDS);
 
-        $jsonSchema = $this->schema->jsonSchema();
-        if ($jsonSchema === null) {
-            return null;
-        }
+        return $lock->block(self::DEFAULT_LOCK_TIMEOUT_SECONDS, function () use ($callback): array {
+            $currentData = self::DEFAULT_EMPTY_DATA;
 
-        if ($outputPath !== null) {
-            $encoded = json_encode($jsonSchema, self::JSON_ENCODE_FLAGS);
-            if ($encoded === false) {
-                throw new ManifestException('Failed to serialize JSON Schema for export.');
+            if ($this->exists()) {
+                try {
+                    /** @var array<string, mixed> $currentData */
+                    $currentData = $this->files->json($this->path, flags: JSON_THROW_ON_ERROR, lock: true);
+                } catch (JsonException $e) {
+                    throw new ManifestException("Malformed JSON in manifest [{$this->path}]: {$e->getMessage()}", 0, $e);
+                }
+            } elseif ($this->schema !== null) {
+                $currentData = $this->schema->defaults();
             }
 
-            $this->storage->writeAtomic($outputPath, $encoded.self::NEWLINE);
-        }
+            $before = $currentData;
+            $mutated = $callback($currentData);
 
-        return $jsonSchema;
-    }
+            if (! is_array($mutated)) {
+                throw new ManifestException('Mutation callback must return an array.');
+            }
 
-    /**
-     * Read manifest contents into an in-memory ManifestDocument object.
-     *
-     * @throws ManifestException
-     */
-    public function read(): ManifestDocument
-    {
-        return new ManifestDocument($this->load(), $this->hydrator);
-    }
+            if ($this->schema !== null) {
+                $this->validate($mutated);
+            }
 
-    /**
-     * Persist an in-memory ManifestDocument or array to disk atomically.
-     *
-     * @param  ManifestDocument|array<string, mixed>  $document
-     *
-     * @throws ManifestException
-     */
-    public function write(ManifestDocument|array $document): self
-    {
-        $data = $document instanceof ManifestDocument ? $document->all() : $document;
+            $json = json_encode($mutated, self::JSON_ENCODE_FLAGS);
+            if ($json === false) {
+                throw new ManifestException("Failed to serialize manifest JSON for [{$this->path}].");
+            }
 
-        $this->save($data);
+            $this->files->ensureDirectoryExists(dirname($this->path));
+            $this->files->replace($this->path, $json.self::NEWLINE);
 
-        if ($document instanceof ManifestDocument) {
-            $document->resetDirty();
-        }
+            $this->data = $mutated;
+            $this->isDirty = false;
 
-        return $this;
-    }
+            $this->dispatch(new ManifestMutated($this->path, $before, $mutated));
 
-    /**
-     * Execute multiple in-memory operations inside an exclusive file lock transaction.
-     *
-     * @param  callable(ManifestDocument): (ManifestDocument|void)  $callback
-     *
-     * @throws ManifestException
-     */
-    public function transaction(callable $callback): ManifestDocument
-    {
-        $docResult = null;
-
-        $this->mutate(function (array $data) use ($callback, &$docResult): array {
-            $document = new ManifestDocument($data, $this->hydrator);
-
-            $result = $callback($document);
-
-            $docResult = $result instanceof ManifestDocument ? $result : $document;
-
-            return $docResult->all();
+            return $mutated;
         });
-
-        /** @var ManifestDocument $docResult */
-        return $docResult;
     }
 
     /**
@@ -590,78 +506,44 @@ class Manifest
     }
 
     /**
-     * Execute multiple modifications in a single locked transaction.
+     * Export the schema's JSON Schema to a file or return as an array.
      *
-     * @param  callable(array<string, mixed>): array<string, mixed>  $callback
-     */
-    public function batch(callable $callback): self
-    {
-        $this->mutate($callback);
-
-        return $this;
-    }
-
-    /**
-     * Mutate manifest data inside an exclusive file lock transaction.
-     *
-     * @param  callable(array<string, mixed>): array<string, mixed>  $callback
-     * @return array<string, mixed>
+     * @return array<string, mixed>|null
      *
      * @throws ManifestException
      */
-    public function mutate(callable $callback): array
+    public function exportJsonSchema(?string $outputPath = null): ?array
     {
-        $previousData = $this->data;
-        $before = self::DEFAULT_EMPTY_DATA;
-        $mutatedData = self::DEFAULT_EMPTY_DATA;
-
-        try {
-            $this->storage->mutateLocked($this->path, function (string $content) use ($callback, &$before, &$mutatedData): string {
-                $data = self::DEFAULT_EMPTY_DATA;
-                if (trim($content) !== self::DEFAULT_EMPTY_CONTENT) {
-                    try {
-                        /** @var array<string, mixed> $data */
-                        $data = json_decode($content, true, self::JSON_DECODE_DEPTH, JSON_THROW_ON_ERROR);
-                    } catch (JsonException $e) {
-                        throw new ManifestException("Malformed JSON in manifest [{$this->path}]: {$e->getMessage()}", 0, $e);
-                    }
-                } elseif ($this->schema !== null) {
-                    $data = $this->schema->defaults();
-                }
-
-                $before = $data;
-
-                $mutated = $callback($data);
-                if (! is_array($mutated)) {
-                    throw new ManifestException('Mutation callback must return an array.');
-                }
-
-                if ($this->schema !== null) {
-                    $this->validate($mutated);
-                }
-
-                $json = json_encode($mutated, self::JSON_ENCODE_FLAGS);
-                if ($json === false) {
-                    throw new ManifestException("Failed to serialize manifest JSON for [{$this->path}].");
-                }
-
-                $mutatedData = $mutated;
-
-                return $json.self::NEWLINE;
-            });
-        } catch (Throwable $e) {
-            $this->data = $previousData;
-            throw $e;
+        if ($this->schema === null) {
+            return null;
         }
 
-        $this->data = $mutatedData;
-        $this->loadedHash = sha1(json_encode($mutatedData, self::JSON_ENCODE_FLAGS).self::NEWLINE);
-        clearstatcache(true, $this->path);
-        $this->lastLoadedMtime = @filemtime($this->path) ?: null;
-        $this->isDirty = false;
+        $jsonSchema = $this->schema->jsonSchema();
+        if ($jsonSchema === null) {
+            return null;
+        }
 
-        $this->dispatch(new ManifestMutated($this->path, $before, $mutatedData));
+        if ($outputPath !== null) {
+            $encoded = json_encode($jsonSchema, self::JSON_ENCODE_FLAGS);
+            if ($encoded === false) {
+                throw new ManifestException('Failed to serialize JSON Schema for export.');
+            }
 
-        return $mutatedData;
+            $this->files->ensureDirectoryExists(dirname($outputPath));
+            $this->files->replace($outputPath, $encoded.self::NEWLINE);
+        }
+
+        return $jsonSchema;
+    }
+
+    /**
+     * Resolve canonical path for unique lock identification.
+     */
+    protected function canonicalPath(): string
+    {
+        $dirname = dirname($this->path);
+        $realDir = realpath($dirname) ?: $dirname;
+
+        return rtrim($realDir, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.basename($this->path);
     }
 }

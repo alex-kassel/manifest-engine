@@ -8,9 +8,7 @@ use AlexKassel\ManifestEngine\Console\Commands\ManifestMakeCommand;
 use AlexKassel\ManifestEngine\Console\Commands\ManifestSchemaCommand;
 use AlexKassel\ManifestEngine\Console\Commands\ManifestStatusCommand;
 use AlexKassel\ManifestEngine\Console\Commands\ManifestValidateCommand;
-use AlexKassel\ManifestEngine\Contracts\StorageDriver;
 use AlexKassel\ManifestEngine\Hydration\DtoHydrator;
-use AlexKassel\ManifestEngine\Storage\AtomicFileStorage;
 use AlexKassel\ManifestEngine\Validation\ManifestValidator;
 use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Events\Dispatcher;
@@ -27,22 +25,6 @@ class ManifestEngineServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        $this->app->singleton(StorageDriver::class, function ($app) {
-            $lockProvider = null;
-
-            if ($app->bound('cache')) {
-                $cacheStore = $app->make('cache')->store()->getStore();
-                if ($cacheStore instanceof LockProvider) {
-                    $lockProvider = $cacheStore;
-                }
-            }
-
-            return new AtomicFileStorage(
-                files: $app->make(Filesystem::class),
-                lockProvider: $lockProvider,
-            );
-        });
-
         $this->app->singleton(ManifestValidator::class, function ($app) {
             $validationFactory = $app->bound('validator')
                 ? $app->make(ValidationFactory::class)
@@ -67,9 +49,18 @@ class ManifestEngineServiceProvider extends ServiceProvider
         });
 
         $this->app->singleton(ManifestManager::class, function ($app) {
+            $lockProvider = null;
+            if ($app->bound('cache')) {
+                $cacheStore = $app->make('cache')->store()->getStore();
+                if ($cacheStore instanceof LockProvider) {
+                    $lockProvider = $cacheStore;
+                }
+            }
+
             return new ManifestManager(
-                storage: $app->make(StorageDriver::class),
+                files: $app->make(Filesystem::class),
                 registry: $app->make(ManifestRegistry::class),
+                lockProvider: $lockProvider,
                 validator: $app->make(ManifestValidator::class),
                 hydrator: $app->make(DtoHydrator::class),
                 events: $app->bound('events') ? $app->make(Dispatcher::class) : null,

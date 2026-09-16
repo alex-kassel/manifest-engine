@@ -5,42 +5,34 @@ declare(strict_types=1);
 namespace AlexKassel\ManifestEngine;
 
 use AlexKassel\ManifestEngine\Contracts\ManifestSchema;
-use AlexKassel\ManifestEngine\Contracts\StorageDriver;
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
 use AlexKassel\ManifestEngine\Hydration\DtoHydrator;
-use AlexKassel\ManifestEngine\Storage\AtomicFileStorage;
 use AlexKassel\ManifestEngine\Validation\ManifestValidator;
+use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Events\Dispatcher;
-use Illuminate\Contracts\Validation\Factory as ValidationFactory;
 use Illuminate\Filesystem\Filesystem;
 
 class ManifestManager
 {
     public const DEFAULT_BASE_DIR = '.';
 
-    protected StorageDriver $storage;
+    protected Filesystem $files;
 
     protected ManifestValidator $validator;
 
     protected DtoHydrator $hydrator;
 
     public function __construct(
-        StorageDriver|Filesystem|null $storage = null,
+        ?Filesystem $files = null,
         protected readonly ManifestRegistry $registry = new ManifestRegistry,
+        protected readonly ?LockProvider $lockProvider = null,
         ?ManifestValidator $validator = null,
         ?DtoHydrator $hydrator = null,
         protected readonly ?Dispatcher $events = null,
         protected readonly ?string $basePath = null,
-        ?ValidationFactory $validatorFactory = null,
     ) {
-        $this->storage = $storage instanceof StorageDriver
-            ? $storage
-            : new AtomicFileStorage($storage instanceof Filesystem ? $storage : new Filesystem);
-
-        $this->validator = $validator ?? ($validatorFactory !== null
-            ? new ManifestValidator($validatorFactory, $this->events)
-            : ManifestValidator::createStandalone($this->events));
-
+        $this->files = $files ?? new Filesystem;
+        $this->validator = $validator ?? ManifestValidator::createStandalone($this->events);
         $this->hydrator = $hydrator ?? new DtoHydrator;
     }
 
@@ -52,7 +44,8 @@ class ManifestManager
         return new Manifest(
             path: $path,
             schema: $schema,
-            storage: $this->storage,
+            files: $this->files,
+            lockProvider: $this->lockProvider,
             validator: $this->validator,
             hydrator: $this->hydrator,
             events: $this->events,
@@ -75,40 +68,6 @@ class ManifestManager
         $fullPath = rtrim($root, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.$definition->filename;
 
         return $this->open($fullPath, $definition->resolveSchema());
-    }
-
-    /**
-     * Read a registered manifest into an in-memory ManifestDocument object.
-     *
-     * @throws ManifestException
-     */
-    public function read(string $name, ?string $basePath = null): ManifestDocument
-    {
-        return $this->get($name, $basePath)->read();
-    }
-
-    /**
-     * Persist an in-memory ManifestDocument or array to disk for a registered manifest.
-     *
-     * @param  ManifestDocument|array<string, mixed>  $document
-     *
-     * @throws ManifestException
-     */
-    public function write(string $name, ManifestDocument|array $document, ?string $basePath = null): Manifest
-    {
-        return $this->get($name, $basePath)->write($document);
-    }
-
-    /**
-     * Execute an in-memory transaction on a registered manifest under exclusive lock.
-     *
-     * @param  callable(ManifestDocument): (ManifestDocument|void)  $callback
-     *
-     * @throws ManifestException
-     */
-    public function transaction(string $name, callable $callback, ?string $basePath = null): ManifestDocument
-    {
-        return $this->get($name, $basePath)->transaction($callback);
     }
 
     /**
@@ -150,10 +109,10 @@ class ManifestManager
     }
 
     /**
-     * Get underlying storage driver instance.
+     * Get underlying filesystem instance.
      */
-    public function storage(): StorageDriver
+    public function files(): Filesystem
     {
-        return $this->storage;
+        return $this->files;
     }
 }

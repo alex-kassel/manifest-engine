@@ -86,7 +86,7 @@ class InMemoryMutationTest extends TestCase
         $this->assertArrayNotHasKey('a', $rawAfter);
     }
 
-    public function test_it_auto_invalidates_cache_when_file_mtime_changes_externally(): void
+    public function test_it_reloads_fresh_data_from_disk(): void
     {
         $path = "{$this->tempDir}/manifest.json";
         $this->files->put($path, json_encode(['counter' => 1]));
@@ -94,11 +94,9 @@ class InMemoryMutationTest extends TestCase
         $manifest = Manifest::open($path, files: $this->files);
         $this->assertSame(1, $manifest->get('counter'));
 
-        // Simulate external edit with changed mtime
-        sleep(1);
+        // Simulate external edit
         $this->files->put($path, json_encode(['counter' => 99]));
 
-        // Without calling fresh(), get() should detect mtime change and reload
-        $this->assertSame(99, $manifest->get('counter'));
+        $this->assertSame(99, $manifest->fresh()->get('counter'));
     }
 }
