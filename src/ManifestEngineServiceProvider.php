@@ -12,6 +12,7 @@ use AlexKassel\ManifestEngine\Contracts\StorageDriver;
 use AlexKassel\ManifestEngine\Hydration\DtoHydrator;
 use AlexKassel\ManifestEngine\Storage\AtomicFileStorage;
 use AlexKassel\ManifestEngine\Validation\ManifestValidator;
+use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Validation\Factory as ValidationFactory;
 use Illuminate\Filesystem\Filesystem;
@@ -30,6 +31,8 @@ class ManifestEngineServiceProvider extends ServiceProvider
      */
     public const DEFAULT_EMPTY_MANIFESTS = [];
 
+    public const DEFAULT_EMPTY_FILENAME = '';
+
     /**
      * Register any application services.
      */
@@ -42,10 +45,19 @@ class ManifestEngineServiceProvider extends ServiceProvider
 
         $this->app->singleton(StorageDriver::class, function ($app) {
             $locksDir = config('manifest-engine.locks_directory');
+            $lockProvider = null;
+
+            if ($app->bound('cache')) {
+                $cacheStore = $app->make('cache')->store()->getStore();
+                if ($cacheStore instanceof LockProvider) {
+                    $lockProvider = $cacheStore;
+                }
+            }
 
             return new AtomicFileStorage(
                 files: $app->make(Filesystem::class),
-                locksDirectory: is_string($locksDir) ? $locksDir : null
+                locksDirectory: is_string($locksDir) ? $locksDir : null,
+                lockProvider: $lockProvider,
             );
         });
 
@@ -66,6 +78,8 @@ class ManifestEngineServiceProvider extends ServiceProvider
             return new DtoHydrator;
         });
 
+        $this->app->alias(DtoHydrator::class, Contracts\DtoHydratorInterface::class);
+
         $this->app->singleton(ManifestRegistry::class, function () {
             return new ManifestRegistry;
         });
@@ -78,6 +92,13 @@ class ManifestEngineServiceProvider extends ServiceProvider
                 hydrator: $app->make(DtoHydrator::class),
                 events: $app->bound('events') ? $app->make(Dispatcher::class) : null,
                 basePath: function_exists('base_path') ? base_path() : null,
+            );
+        });
+
+        $this->app->singleton(Services\ManifestInspectionService::class, function ($app) {
+            return new Services\ManifestInspectionService(
+                manager: $app->make(ManifestManager::class),
+                files: $app->make(Filesystem::class),
             );
         });
 
@@ -120,12 +141,12 @@ class ManifestEngineServiceProvider extends ServiceProvider
         $registry = $this->app->make(ManifestRegistry::class);
 
         foreach ($manifests as $name => $config) {
-            $filename = (string) ($config['filename'] ?? '');
+            $filename = (string) ($config['filename'] ?? self::DEFAULT_EMPTY_FILENAME);
             $schema = $config['schema'] ?? null;
             $description = isset($config['description']) ? (string) $config['description'] : null;
             $metadata = isset($config['metadata']) && is_array($config['metadata']) ? $config['metadata'] : [];
 
-            if ($filename !== '' && $schema !== null) {
+            if ($filename !== self::DEFAULT_EMPTY_FILENAME && $schema !== null) {
                 $registry->register(
                     name: $name,
                     filename: $filename,

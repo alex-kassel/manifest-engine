@@ -5,8 +5,7 @@ declare(strict_types=1);
 namespace AlexKassel\ManifestEngine\Console\Commands;
 
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
-use AlexKassel\ManifestEngine\Exceptions\ManifestValidationException;
-use AlexKassel\ManifestEngine\ManifestManager;
+use AlexKassel\ManifestEngine\Services\ManifestInspectionService;
 use Illuminate\Console\Command;
 
 class ManifestValidateCommand extends Command
@@ -47,7 +46,7 @@ class ManifestValidateCommand extends Command
     protected $description = 'Validate registered manifest files against their schema rules';
 
     public function __construct(
-        protected readonly ManifestManager $manager,
+        protected readonly ManifestInspectionService $inspector,
     ) {
         parent::__construct();
     }
@@ -57,22 +56,22 @@ class ManifestValidateCommand extends Command
      */
     public function handle(): int
     {
-        $registry = $this->manager->registry();
         $targetName = $this->argument('name');
+        $basePathOption = $this->option('base-path');
+        $basePath = is_string($basePathOption) && trim($basePathOption) !== '' ? $basePathOption : null;
 
-        if (is_string($targetName) && trim($targetName) !== '') {
-            $definition = $registry->get($targetName);
-            if ($definition === null) {
-                $this->error("No manifest registered with alias [{$targetName}].");
+        try {
+            $reports = $this->inspector->validateAll(
+                targetName: is_string($targetName) && trim($targetName) !== '' ? trim($targetName) : null,
+                basePath: $basePath,
+            );
+        } catch (ManifestException $e) {
+            $this->error($e->getMessage());
 
-                return self::FAILURE;
-            }
-            $manifests = [$targetName => $definition];
-        } else {
-            $manifests = $registry->all();
+            return self::FAILURE;
         }
 
-        if (empty($manifests)) {
+        if (empty($reports)) {
             $this->comment(self::EMPTY_REGISTRY_MESSAGE);
 
             return self::SUCCESS;
@@ -80,34 +79,16 @@ class ManifestValidateCommand extends Command
 
         $rows = [];
         $hasFailures = false;
-        $basePathOption = $this->option('base-path');
-        $basePath = is_string($basePathOption) && trim($basePathOption) !== '' ? $basePathOption : null;
 
-        foreach ($manifests as $name => $def) {
-            try {
-                $manifest = $this->manager->get($name, $basePath);
-
-                if (! $manifest->exists()) {
-                    $rows[] = [$name, $def->filename, self::STATUS_MISSING_LABEL, self::DEFAULT_PLACEHOLDER];
-                    $hasFailures = true;
-
-                    continue;
-                }
-
-                $data = $manifest->load(forceFresh: true);
-                $manifest->validate($data);
-
-                $rows[] = [$name, $def->filename, self::STATUS_VALID_LABEL, self::DEFAULT_PLACEHOLDER];
-            } catch (ManifestValidationException $e) {
+        foreach ($reports as $report) {
+            if (! $report->exists) {
+                $rows[] = [$report->name, $report->filename, self::STATUS_MISSING_LABEL, self::DEFAULT_PLACEHOLDER];
                 $hasFailures = true;
-                $errorMessages = [];
-                foreach ($e->errors as $field => $messages) {
-                    $errorMessages[] = $field.': '.implode(', ', $messages);
-                }
-                $rows[] = [$name, $def->filename, self::STATUS_INVALID_LABEL, implode("\n", $errorMessages)];
-            } catch (ManifestException $e) {
+            } elseif (! $report->isValid) {
+                $rows[] = [$report->name, $report->filename, self::STATUS_INVALID_LABEL, $report->formattedErrors()];
                 $hasFailures = true;
-                $rows[] = [$name, $def->filename, self::STATUS_INVALID_LABEL, $e->getMessage()];
+            } else {
+                $rows[] = [$report->name, $report->filename, self::STATUS_VALID_LABEL, self::DEFAULT_PLACEHOLDER];
             }
         }
 

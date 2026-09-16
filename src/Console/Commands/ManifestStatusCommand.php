@@ -4,9 +4,8 @@ declare(strict_types=1);
 
 namespace AlexKassel\ManifestEngine\Console\Commands;
 
-use AlexKassel\ManifestEngine\ManifestRegistry;
+use AlexKassel\ManifestEngine\Services\ManifestInspectionService;
 use Illuminate\Console\Command;
-use Illuminate\Filesystem\Filesystem;
 
 class ManifestStatusCommand extends Command
 {
@@ -38,8 +37,7 @@ class ManifestStatusCommand extends Command
     protected $description = 'Show registered manifests and their file presence';
 
     public function __construct(
-        protected readonly ManifestRegistry $registry,
-        protected readonly Filesystem $files,
+        protected readonly ManifestInspectionService $inspector,
     ) {
         parent::__construct();
     }
@@ -49,50 +47,28 @@ class ManifestStatusCommand extends Command
      */
     public function handle(): int
     {
-        $manifests = $this->registry->all();
+        $reports = $this->inspector->getStatusReports();
 
-        if (empty($manifests)) {
+        if (empty($reports)) {
             $this->comment(self::EMPTY_REGISTRY_MESSAGE);
 
             return self::SUCCESS;
         }
 
-        $rootPath = function_exists('base_path') ? base_path() : (string) getcwd();
         $rows = [];
-
-        foreach ($manifests as $name => $def) {
-            $manifestPath = $rootPath.DIRECTORY_SEPARATOR.$def->filename;
-            $hasManifest = $this->files->exists($manifestPath);
-
-            $size = $hasManifest ? $this->formatBytes((int) $this->files->size($manifestPath)) : self::DEFAULT_PLACEHOLDER;
-            $lastModified = $hasManifest ? date('Y-m-d H:i:s', (int) $this->files->lastModified($manifestPath)) : self::DEFAULT_PLACEHOLDER;
-
+        foreach ($reports as $report) {
             $rows[] = [
-                $name,
-                $def->filename,
-                $hasManifest ? self::STATUS_EXISTS_LABEL : self::STATUS_MISSING_LABEL,
-                $size,
-                $lastModified,
-                $def->description ?? self::DEFAULT_PLACEHOLDER,
+                $report->name,
+                $report->filename,
+                $report->exists ? self::STATUS_EXISTS_LABEL : self::STATUS_MISSING_LABEL,
+                $report->humanSize ?? self::DEFAULT_PLACEHOLDER,
+                $report->lastModified ?? self::DEFAULT_PLACEHOLDER,
+                $report->description ?? self::DEFAULT_PLACEHOLDER,
             ];
         }
 
         $this->table(self::TABLE_HEADERS, $rows);
 
         return self::SUCCESS;
-    }
-
-    /**
-     * Format bytes into a human-readable string.
-     */
-    protected function formatBytes(int $bytes): string
-    {
-        if ($bytes < 1024) {
-            return $bytes.' B';
-        }
-
-        $kb = round($bytes / 1024, 1);
-
-        return $kb.' KB';
     }
 }

@@ -6,14 +6,18 @@ namespace AlexKassel\ManifestEngine\Facades;
 
 use AlexKassel\ManifestEngine\Contracts\ManifestSchema;
 use AlexKassel\ManifestEngine\Contracts\StorageDriver;
-use AlexKassel\ManifestEngine\Manifest as ManifestDocument;
+use AlexKassel\ManifestEngine\Manifest as ManifestStore;
+use AlexKassel\ManifestEngine\ManifestDocument;
 use AlexKassel\ManifestEngine\ManifestManager;
 use AlexKassel\ManifestEngine\ManifestRegistry;
 use Illuminate\Support\Facades\Facade;
 
 /**
- * @method static ManifestDocument open(string $path, ?ManifestSchema $schema = null)
- * @method static ManifestDocument get(string $name, ?string $basePath = null)
+ * @method static ManifestStore open(string $path, ?ManifestSchema $schema = null)
+ * @method static ManifestStore get(string $name, ?string $basePath = null)
+ * @method static ManifestDocument read(string $name, ?string $basePath = null)
+ * @method static ManifestStore write(string $name, ManifestDocument|array $document, ?string $basePath = null)
+ * @method static ManifestDocument transaction(string $name, callable $callback, ?string $basePath = null)
  * @method static bool has(string $name)
  * @method static ManifestRegistry register(string $name, string $filename, ManifestSchema|string $schema, ?string $description = null, array $metadata = [])
  * @method static ManifestRegistry registry()

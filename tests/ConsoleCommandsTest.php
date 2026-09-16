@@ -139,4 +139,45 @@ class ConsoleCommandsTest extends TestCase
             $this->files->delete($manifest->path);
         }
     }
+
+    public function test_manifest_schema_command_handles_missing_argument_fail_safely(): void
+    {
+        /** @var ManifestManager $manager */
+        $manager = app(ManifestManager::class);
+        $manager->registry()->clear();
+
+        // Empty registry scenario
+        $this->artisan('manifest:schema', ['--no-interaction' => true])
+            ->assertSuccessful();
+
+        // Registered manifests scenario with missing argument
+        $manager->registry()->register('test_alias', 'test.json', new class extends BaseSchema
+        {
+            public function defaults(): array
+            {
+                return [];
+            }
+
+            public function rules(): array
+            {
+                return [];
+            }
+        });
+
+        $this->artisan('manifest:schema', ['--no-interaction' => true])
+            ->expectsOutputToContain('Please specify a manifest name.')
+            ->assertFailed();
+    }
+
+    public function test_manifest_make_command_handles_missing_argument_fail_safely(): void
+    {
+        /** @var ManifestManager $manager */
+        $manager = app(ManifestManager::class);
+        $manager->registry()->clear();
+
+        // Non-interactive without argument should not crash Symfony console
+        $this->artisan('manifest:make', ['--no-interaction' => true])
+            ->expectsOutputToContain('Please specify a manifest alias name or file path')
+            ->assertFailed();
+    }
 }

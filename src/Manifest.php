@@ -424,6 +424,61 @@ class Manifest
     }
 
     /**
+     * Read manifest contents into an in-memory ManifestDocument object.
+     *
+     * @throws ManifestException
+     */
+    public function read(): ManifestDocument
+    {
+        return new ManifestDocument($this->load(), $this->hydrator);
+    }
+
+    /**
+     * Persist an in-memory ManifestDocument or array to disk atomically.
+     *
+     * @param  ManifestDocument|array<string, mixed>  $document
+     *
+     * @throws ManifestException
+     */
+    public function write(ManifestDocument|array $document): self
+    {
+        $data = $document instanceof ManifestDocument ? $document->all() : $document;
+
+        $this->save($data);
+
+        if ($document instanceof ManifestDocument) {
+            $document->resetDirty();
+        }
+
+        return $this;
+    }
+
+    /**
+     * Execute multiple in-memory operations inside an exclusive file lock transaction.
+     *
+     * @param  callable(ManifestDocument): (ManifestDocument|void)  $callback
+     *
+     * @throws ManifestException
+     */
+    public function transaction(callable $callback): ManifestDocument
+    {
+        $docResult = null;
+
+        $this->mutate(function (array $data) use ($callback, &$docResult): array {
+            $document = new ManifestDocument($data, $this->hydrator);
+
+            $result = $callback($document);
+
+            $docResult = $result instanceof ManifestDocument ? $result : $document;
+
+            return $docResult->all();
+        });
+
+        /** @var ManifestDocument $docResult */
+        return $docResult;
+    }
+
+    /**
      * Get all manifest data.
      *
      * @return array<string, mixed>

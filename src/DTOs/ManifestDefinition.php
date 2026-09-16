@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AlexKassel\ManifestEngine\DTOs;
 
 use AlexKassel\ManifestEngine\Contracts\ManifestSchema;
+use Illuminate\Container\Container;
 
 class ManifestDefinition
 {
@@ -29,6 +30,15 @@ class ManifestDefinition
             return $this->schema;
         }
 
+        if (class_exists(Container::class)) {
+            $container = Container::getInstance();
+            if ($container !== null) {
+                /** @var ManifestSchema */
+                return $container->make($this->schema);
+            }
+        }
+
+        /** @var ManifestSchema */
         return new $this->schema;
     }
 }

@@ -16,6 +16,8 @@ use Illuminate\Filesystem\Filesystem;
 
 class ManifestManager
 {
+    public const DEFAULT_BASE_DIR = '.';
+
     protected StorageDriver $storage;
 
     protected ManifestValidator $validator;
@@ -69,10 +71,44 @@ class ManifestManager
             throw new ManifestException("No manifest registered with alias [{$name}].");
         }
 
-        $root = $basePath ?? $this->basePath ?? (function_exists('base_path') ? base_path() : (string) getcwd());
+        $root = $basePath ?? $this->basePath ?? (function_exists('base_path') ? base_path() : (string) (getcwd() ?: self::DEFAULT_BASE_DIR));
         $fullPath = rtrim($root, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.$definition->filename;
 
         return $this->open($fullPath, $definition->resolveSchema());
+    }
+
+    /**
+     * Read a registered manifest into an in-memory ManifestDocument object.
+     *
+     * @throws ManifestException
+     */
+    public function read(string $name, ?string $basePath = null): ManifestDocument
+    {
+        return $this->get($name, $basePath)->read();
+    }
+
+    /**
+     * Persist an in-memory ManifestDocument or array to disk for a registered manifest.
+     *
+     * @param  ManifestDocument|array<string, mixed>  $document
+     *
+     * @throws ManifestException
+     */
+    public function write(string $name, ManifestDocument|array $document, ?string $basePath = null): Manifest
+    {
+        return $this->get($name, $basePath)->write($document);
+    }
+
+    /**
+     * Execute an in-memory transaction on a registered manifest under exclusive lock.
+     *
+     * @param  callable(ManifestDocument): (ManifestDocument|void)  $callback
+     *
+     * @throws ManifestException
+     */
+    public function transaction(string $name, callable $callback, ?string $basePath = null): ManifestDocument
+    {
+        return $this->get($name, $basePath)->transaction($callback);
     }
 
     /**

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AlexKassel\ManifestEngine\Tests;
 
+use AlexKassel\ManifestEngine\Hydration\ArrayOf;
 use AlexKassel\ManifestEngine\Hydration\DtoHydrator;
 
 class SampleSimpleDto
@@ -72,4 +73,47 @@ class DtoHydratorTest extends TestCase
 
         $this->assertSame(['title' => 'Test', 'count' => 99], $data);
     }
+
+    public function test_it_hydrates_nested_typed_collections(): void
+    {
+        $data = [
+            'orderId' => 'ORD-101',
+            'items' => [
+                ['sku' => 'ITEM-A', 'qty' => 2],
+                ['sku' => 'ITEM-B', 'qty' => 5],
+            ],
+        ];
+
+        $order = $this->hydrator->hydrate(SampleOrderDto::class, $data);
+
+        $this->assertInstanceOf(SampleOrderDto::class, $order);
+        $this->assertSame('ORD-101', $order->orderId);
+        $this->assertCount(2, $order->items);
+        $this->assertInstanceOf(SampleItemDto::class, $order->items[0]);
+        $this->assertSame('ITEM-A', $order->items[0]->sku);
+        $this->assertSame(2, $order->items[0]->qty);
+        $this->assertInstanceOf(SampleItemDto::class, $order->items[1]);
+        $this->assertSame('ITEM-B', $order->items[1]->sku);
+
+        // Verify serialization back to primitive array
+        $serialized = $this->hydrator->serialize($order);
+        $this->assertSame($data, $serialized);
+    }
+}
+
+class SampleItemDto
+{
+    public function __construct(
+        public string $sku,
+        public int $qty,
+    ) {}
+}
+
+class SampleOrderDto
+{
+    public function __construct(
+        public string $orderId,
+        #[ArrayOf(SampleItemDto::class)]
+        public array $items = [],
+    ) {}
 }
