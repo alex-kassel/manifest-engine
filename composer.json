@@ -1,5 +1,6 @@
 {
     "name": "alex-kassel/manifest-engine",
+    "version": "0.0.5",
     "description": "Schema-driven, atomic file-backed JSON manifest engine for PHP and Laravel",
     "keywords": [
         "laravel",

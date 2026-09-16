@@ -30,7 +30,7 @@
 
 ## Why This Exists
 
-Storing application metadata, registries, configuration state, or domain catalogs in traditional relational databases (MySQL, Postgres) introduces unnecessary friction for local and developer tooling:
+Storing application metadata, registries, configuration state, or domain catalogs in traditional relational databases introduces unnecessary friction for local and developer tooling:
 * **Opaque to Git:** State cannot be easily committed, reviewed in Pull Requests, or diffed.
 * **Complex for AI Agents:** AI coding agents natively inspect and edit local flat files, but require external database connections to access SQL data.
 * **Migration Overhead:** Environment rollbacks and synchronization require stateful migrations.
@@ -40,18 +40,16 @@ Conversely, ad-hoc `json_decode()` and `file_put_contents()` approaches introduc
 * **Schema Drift:** Unvalidated writes allow corrupted keys and invalid types to proliferate.
 * **Noisy Diffs:** Inconsistent JSON key formatting and unescaped characters cause chaotic Git diffs.
 
-**ManifestEngine** solves this by providing an atomic, schema-validated, file-backed state repository with **OS-level locking (`flock`)**, **safe atomic rename transactions**, **optimistic concurrency control**, **dot-notation traversal**, and **automatic JSON Schema generation for IDEs**.
+**ManifestEngine** solves this by providing a clean, schema-validated, file-backed state repository powered natively by Laravel's **Atomic Locks (`Cache::lock()`)**, **safe atomic replacement (`File::replace()`)**, **shared read locks (`File::json()`)**, **dot-notation traversal**, and **automatic JSON Schema generation for IDEs**.
 
 ---
 
 ## Key Features
 
-* **🛡️ Safe Atomic Transactions:** Reads use shared locks (`LOCK_SH`); writes and mutations run under exclusive locks (`LOCK_EX`) with temporary-file atomic replacement (`rename`), eliminating 0-byte file truncation risks.
+* **🛡️ Safe Atomic Transactions:** Mutations run under Laravel atomic locks (`Cache::lock()`) with temporary-file atomic replacement (`File::replace()`), eliminating 0-byte file truncation and race conditions.
 * **📐 Schema-Driven Validation:** Enforce structure, default values, and data integrity using standard Laravel validation rules.
 * **💡 Automatic JSON Schema:** Automatically compiles Laravel validation rules into Draft-07 JSON Schema for VS Code and PhpStorm autocompletion.
-* **⚡ Optimistic Concurrency Control:** Detect external changes on disk using content hashes (`saveOptimistic()`).
-* **📦 Typed DTO Hydration:** Seamlessly map manifest data to and from typed DTOs via the `ManifestDto` contract or constructor reflection.
-* **⏪ Snapshots & Rollbacks:** Take in-memory snapshots and roll back state on failed operations.
+* **📦 Typed DTO Hydration:** Map manifest data to and from typed DTOs via the `ManifestDto` contract or constructor promotion.
 * **🔍 Dot-Notation Access:** Query, mutate, and delete nested paths effortlessly (`$manifest->get('app.channels')`, `$manifest->append('domains', $entry)`).
 * **🗂️ Centralized Manifest Registry:** Register application manifests once and open them anywhere via alias: `Manifest::get('registry')`.
 * ** Git-Optimized Serialization:** Always formatted with `JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES` and trailing newline.
@@ -97,11 +95,11 @@ $manifest->set('meta.environment', 'production')
     ])
     ->save();
 
-// 4. Query nested values
+// 3. Query nested values
 $domains = $manifest->get('domains', []);
 $env = $manifest->get('meta.environment');
 
-// 5. Safe atomic transaction
+// 4. Safe atomic transaction
 $manifest->mutate(function (array $data): array {
     $data['counter'] = ($data['counter'] ?? 0) + 1;
     return $data;
@@ -179,7 +177,7 @@ Then open it from anywhere in your codebase using the registered alias:
 
 ```php
 $registry = Manifest::get('app_registry');
-$registry->set('status', 'active');
+$registry->set('status', 'active')->save();
 ```
 
 Check presence across registered manifests via CLI:
@@ -188,13 +186,13 @@ Check presence across registered manifests via CLI:
 php artisan manifest:status
 ```
 
-### 3. Batching & Concurrency Best Practices
+### 3. Atomic Transactions (`mutate()`)
 
 > [!TIP]
-> Each standalone `set()`, `append()`, or `forget()` call acquires an exclusive lock and performs an atomic write. When making multiple changes, use `batch()` or `mutate()` to run all modifications in a single locked transaction:
+> Use `$manifest->mutate()` whenever multiple modifications or concurrent processes need guaranteed atomicity. It runs under an exclusive Laravel atomic lock:
 
 ```php
-$manifest->batch(function (array $data): array {
+$manifest->mutate(function (array $data): array {
     $data['settings']['theme'] = 'dark';
     $data['settings']['notifications'] = true;
     $data['updated_at'] = date('c');
@@ -239,30 +237,18 @@ $dto->version++;
 $manifest->saveDto($dto);
 ```
 
-### 5. Optimistic Concurrency Control
-
-Prevent accidental overwrites when multiple external processes or Git branches modify files:
-
-```php
-// Read manifest
-$manifest = Manifest::open(base_path('state.json'));
-
-// If an external process changes state.json before this save completes,
-// a ManifestConcurrentModificationException is thrown:
-$manifest->saveOptimistic($updatedData);
-```
-
 ---
 
 ## Architecture
 
-ManifestEngine adheres to Single Responsibility (SRP) and clean dependency injection:
+ManifestEngine adheres to Single Responsibility (SRP) and the Laravel-First philosophy:
 
-* **`StorageDriver` (`AtomicFileStorage`):** Manages file I/O, shared read locks, exclusive mutation locks, and atomic replacement via temporary files.
-* **`ManifestValidator`:** Handles schema validation via Laravel's Validation Factory.
-* **`DtoHydrator`:** Converts manifest payloads into typed objects and serializes them back.
-* **`JsonSchemaCompiler`:** Translates Laravel validation rules into Draft-07 JSON Schema.
-* **`Manifest`:** Expressive document repository focused entirely on querying and mutating state.
+* **Concurrency & Locking:** Powered by `Illuminate\Contracts\Cache\LockProvider` (`Cache::lock()`) with automatic timeouts and owner isolation.
+* **Storage & Atomic Writes:** Uses `Illuminate\Filesystem\Filesystem` (`replace()` for atomic rename and `json()` for shared-lock reading).
+* **Validation:** Handles schema validation via Laravel's native Validation Factory.
+* **DTO Hydration:** Converts manifest payloads into typed objects via the `ManifestDto` contract or PHP 8 constructor promotion.
+* **JSON Schema Generation:** Translates Laravel validation rules into Draft-07 JSON Schema.
+* **`Manifest`:** Unified document handler focused entirely on querying and mutating state.
 * **`ManifestManager` & `ManifestRegistry`:** Central coordinator for opening arbitrary documents or registered aliases.
 
 ---
@@ -276,19 +262,15 @@ ManifestEngine adheres to Single Responsibility (SRP) and clean dependency injec
 | `Manifest::open(string $path, ?ManifestSchema $schema = null)` | `Manifest` | Instantiate a manifest document handler. |
 | `exists()` | `bool` | Check if the manifest file exists on disk. |
 | `init()` | `self` | Initialize the file with schema defaults if missing. |
-| `load(bool $forceFresh = false)` | `array` | Read and decode manifest data with shared lock and auto-invalidation. |
+| `load(bool $forceFresh = false)` | `array` | Read and decode manifest data with shared lock protection. |
 | `isDirty()` | `bool` | Determine if in-memory data has unpersisted changes. |
-| `save(?array $data = null)` | `self` | Persist in-memory state or provided data atomically. |
-| `saveOptimistic(?array $data = null, ?string $hash = null)` | `self` | Write data with concurrency conflict verification. |
+| `save(?array $data = null)` | `self` | Persist in-memory state or provided data atomically via `File::replace()`. |
+| `mutate(callable $callback)` | `array` | Run an atomic read-modify-write transaction under atomic lock. |
 | `get(string $key, mixed $default = null)` | `mixed` | Read a nested value using dot-notation. |
 | `has(string $key)` | `bool` | Check if a nested key exists. |
 | `set(string $key, mixed $value)` | `self` | Set a nested key in memory (chainable). |
 | `append(string $key, mixed $value)` | `self` | Append a value to an array in memory (chainable). |
 | `forget(string $key)` | `self` | Remove a nested key in memory (chainable). |
-| `batch(callable $callback)` | `self` | Run multiple modifications in a single locked transaction. |
-| `mutate(callable $callback)` | `array` | Run an atomic read-modify-write transaction immediately. |
-| `snapshot()` | `self` | Capture an in-memory state snapshot. |
-| `rollback()` | `self` | Restore state from the captured snapshot. |
 | `fresh()` / `reload()` | `self` | Invalidate in-memory cache and re-read from disk. |
 | `toDto(string $dtoClass)` | `object` | Hydrate manifest into a typed DTO object. |
 | `saveDto(object $dto)` | `void` | Save a typed DTO back to the manifest. |
