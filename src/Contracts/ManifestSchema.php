@@ -36,6 +36,20 @@ interface ManifestSchema
     public function attributes(): array;
 
     /**
+     * Field descriptions for JSON Schema generation keyed by dot-notation.
+     *
+     * @return array<string, string>
+     */
+    public function descriptions(): array;
+
+    /**
+     * Explicit type overrides for JSON Schema generation keyed by dot-notation.
+     *
+     * @return array<string, string>
+     */
+    public function types(): array;
+
+    /**
      * Full JSON Schema (Draft-07) representation for IDE autocomplete and static analysis.
      *
      * @return array<string, mixed>|null

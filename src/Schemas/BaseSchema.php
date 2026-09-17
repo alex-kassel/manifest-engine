@@ -37,8 +37,40 @@ abstract class BaseSchema implements ManifestSchema
     /**
      * {@inheritdoc}
      */
-    public function jsonSchema(): ?array
+    public function descriptions(): array
+    {
+        return [];
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function types(): array
+    {
+        return [];
+    }
+
+    /**
+     * Optional title for JSON Schema.
+     */
+    public function title(): ?string
+    {
+        return class_basename(static::class);
+    }
+
+    /**
+     * Optional description for JSON Schema.
+     */
+    public function description(): ?string
     {
         return null;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function jsonSchema(): ?array
+    {
+        return (new JsonSchemaCompiler)->compile($this);
     }
 }
