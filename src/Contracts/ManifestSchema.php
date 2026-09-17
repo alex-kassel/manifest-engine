@@ -14,45 +14,9 @@ interface ManifestSchema
     public function defaults(): array;
 
     /**
-     * Standard Laravel validation rules for manifest data.
-     * Supports dot-notation, wildcards (*), sometimes, nullable, and custom Rule objects.
+     * Full JSON Schema (Draft-07) representation for IDE autocomplete and static analysis.
      *
      * @return array<string, mixed>
      */
-    public function rules(): array;
-
-    /**
-     * Custom validation error messages.
-     *
-     * @return array<string, string>
-     */
-    public function messages(): array;
-
-    /**
-     * Custom attribute names for validation errors.
-     *
-     * @return array<string, string>
-     */
-    public function attributes(): array;
-
-    /**
-     * Field descriptions for JSON Schema generation keyed by dot-notation.
-     *
-     * @return array<string, string>
-     */
-    public function descriptions(): array;
-
-    /**
-     * Explicit type overrides for JSON Schema generation keyed by dot-notation.
-     *
-     * @return array<string, string>
-     */
-    public function types(): array;
-
-    /**
-     * Full JSON Schema (Draft-07) representation for IDE autocomplete and static analysis.
-     *
-     * @return array<string, mixed>|null
-     */
-    public function jsonSchema(): ?array;
+    public function jsonSchema(): array;
 }

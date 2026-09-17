@@ -91,7 +91,7 @@ class ConsoleCommandsTest extends TestCase
                 return ['app_name' => 'required|string|min:2'];
             }
 
-            public function jsonSchema(): ?array
+            public function jsonSchema(): array
             {
                 return [
                     '$schema' => 'http://json-schema.org/draft-07/schema#',

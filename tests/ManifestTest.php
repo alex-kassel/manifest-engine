@@ -256,7 +256,7 @@ class ManifestTest extends TestCase
                 ];
             }
 
-            public function jsonSchema(): ?array
+            public function jsonSchema(): array
             {
                 return [
                     '$schema' => 'http://json-schema.org/draft-07/schema#',

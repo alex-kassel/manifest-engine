@@ -170,15 +170,23 @@ class Manifest
      */
     public function validate(array $data): void
     {
-        if ($this->schema === null) {
+        if ($this->schema === null || ! method_exists($this->schema, 'rules')) {
             return;
         }
 
+        $rules = $this->schema->rules();
+        if (empty($rules)) {
+            return;
+        }
+
+        $messages = method_exists($this->schema, 'messages') ? $this->schema->messages() : [];
+        $attributes = method_exists($this->schema, 'attributes') ? $this->schema->attributes() : [];
+
         $validator = $this->validator->make(
             $data,
-            $this->schema->rules(),
-            $this->schema->messages(),
-            $this->schema->attributes(),
+            $rules,
+            $messages,
+            $attributes,
         );
 
         if ($validator->fails()) {
