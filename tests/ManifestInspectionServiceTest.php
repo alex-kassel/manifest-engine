@@ -48,11 +48,6 @@ class ManifestInspectionServiceTest extends TestCase
             {
                 return ['title' => 'Sample'];
             }
-
-            public function rules(): array
-            {
-                return ['title' => 'required|string'];
-            }
         };
 
         $this->manager->registry()->register('sample', 'sample.json', $schema, 'Sample Manifest');
@@ -81,11 +76,6 @@ class ManifestInspectionServiceTest extends TestCase
             {
                 return ['count' => 5];
             }
-
-            public function rules(): array
-            {
-                return ['count' => 'required|integer|min:1'];
-            }
         };
 
         $this->manager->registry()->register('metrics', 'metrics.json', $schema);
@@ -104,12 +94,12 @@ class ManifestInspectionServiceTest extends TestCase
         $this->assertTrue($validReports['metrics']->isValid);
 
         // Corrupt file data
-        $this->files->put($manifest->path, json_encode(['count' => 0]));
+        $this->files->put($manifest->path, '{invalid json');
         $invalidReports = $this->service->validateAll('metrics', $this->tempDir);
         $this->assertTrue($invalidReports['metrics']->exists);
         $this->assertFalse($invalidReports['metrics']->isValid);
-        $this->assertNotEmpty($invalidReports['metrics']->errors);
-        $this->assertStringContainsString('count:', $invalidReports['metrics']->formattedErrors());
+        $this->assertNotNull($invalidReports['metrics']->errorMessage);
+        $this->assertStringContainsString('Malformed JSON', $invalidReports['metrics']->formattedErrors());
     }
 
     public function test_format_bytes(): void

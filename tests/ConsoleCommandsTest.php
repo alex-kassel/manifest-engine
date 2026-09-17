@@ -45,11 +45,6 @@ class ConsoleCommandsTest extends TestCase
             {
                 return ['tier' => 'pro'];
             }
-
-            public function rules(): array
-            {
-                return ['tier' => 'required|in:pro,enterprise'];
-            }
         };
 
         $registry->register('service', 'service.json', $schema, description: 'Service manifest');
@@ -65,8 +60,8 @@ class ConsoleCommandsTest extends TestCase
         $this->artisan("manifest:validate service --base-path={$this->tempDir}")
             ->assertSuccessful();
 
-        // Corrupt with invalid value directly on disk (simulating manual edit)
-        $this->files->put($manifest->path, (string) json_encode(['tier' => 'invalid_tier']));
+        // Corrupt with malformed JSON directly on disk
+        $this->files->put($manifest->path, '{broken-json');
 
         $this->artisan("manifest:validate service --base-path={$this->tempDir}")
             ->assertFailed();
@@ -84,11 +79,6 @@ class ConsoleCommandsTest extends TestCase
             public function defaults(): array
             {
                 return ['app_name' => 'Test'];
-            }
-
-            public function rules(): array
-            {
-                return ['app_name' => 'required|string|min:2'];
             }
 
             public function jsonSchema(): array
@@ -128,11 +118,6 @@ class ConsoleCommandsTest extends TestCase
             public function defaults(): array
             {
                 return ['name' => 'Scaffolded', 'active' => true];
-            }
-
-            public function rules(): array
-            {
-                return ['name' => 'required|string'];
             }
         };
 
@@ -178,11 +163,6 @@ class ConsoleCommandsTest extends TestCase
             {
                 return [];
             }
-
-            public function rules(): array
-            {
-                return [];
-            }
         });
 
         $this->artisan('manifest:schema', ['--no-interaction' => true])
@@ -220,11 +200,6 @@ class ConsoleCommandsTest extends TestCase
             public function defaults(): array
             {
                 return ['v' => 2];
-            }
-
-            public function rules(): array
-            {
-                return ['v' => 'required|integer'];
             }
         };
 
@@ -265,11 +240,6 @@ class ConsoleCommandsTest extends TestCase
             {
                 return ['status' => 'ok'];
             }
-
-            public function rules(): array
-            {
-                return [];
-            }
         };
 
         $manager->registry()->register('app_status', 'app_status.json', $schema, description: 'Test desc');
@@ -289,11 +259,6 @@ class ConsoleCommandsTest extends TestCase
             public function defaults(): array
             {
                 return ['status' => 'ok'];
-            }
-
-            public function rules(): array
-            {
-                return [];
             }
         };
 

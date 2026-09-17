@@ -7,7 +7,6 @@ namespace AlexKassel\ManifestEngine\Services;
 use AlexKassel\ManifestEngine\DTOs\ManifestStatusReport;
 use AlexKassel\ManifestEngine\DTOs\ManifestValidationReport;
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
-use AlexKassel\ManifestEngine\Exceptions\ManifestValidationException;
 use AlexKassel\ManifestEngine\ManifestManager;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Number;
@@ -101,8 +100,7 @@ class ManifestInspectionService
                     continue;
                 }
 
-                $data = $manifest->load(forceFresh: true);
-                $manifest->validate($data);
+                $manifest->load(forceFresh: true);
 
                 $reports[$name] = new ManifestValidationReport(
                     name: $name,
@@ -111,21 +109,12 @@ class ManifestInspectionService
                     exists: true,
                     isValid: true,
                 );
-            } catch (ManifestValidationException $e) {
-                $reports[$name] = new ManifestValidationReport(
-                    name: $name,
-                    filename: $def->filename,
-                    path: $manifest->path,
-                    exists: true,
-                    isValid: false,
-                    errors: $e->errors,
-                );
             } catch (ManifestException $e) {
                 $reports[$name] = new ManifestValidationReport(
                     name: $name,
                     filename: $def->filename,
                     path: $manifest->path,
-                    exists: false,
+                    exists: $manifest->exists(),
                     isValid: false,
                     errorMessage: $e->getMessage(),
                 );

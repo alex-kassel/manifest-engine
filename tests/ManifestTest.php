@@ -10,11 +10,9 @@ use AlexKassel\ManifestEngine\Events\ManifestMutated;
 use AlexKassel\ManifestEngine\Events\ManifestOpened;
 use AlexKassel\ManifestEngine\Events\ManifestSaved;
 use AlexKassel\ManifestEngine\Events\ManifestSaving;
-use AlexKassel\ManifestEngine\Events\ManifestValidationFailed;
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestLockTimeoutException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestNotFoundException;
-use AlexKassel\ManifestEngine\Exceptions\ManifestValidationException;
 use AlexKassel\ManifestEngine\Manifest;
 use AlexKassel\ManifestEngine\Schemas\BaseSchema;
 use Illuminate\Events\Dispatcher;
@@ -93,14 +91,6 @@ class ManifestTest extends TestCase
             public function defaults(): array
             {
                 return ['version' => 1, 'items' => []];
-            }
-
-            public function rules(): array
-            {
-                return [
-                    'version' => ['required', 'integer'],
-                    'items' => ['present', 'array'],
-                ];
             }
         };
 
@@ -215,30 +205,6 @@ class ManifestTest extends TestCase
         }
     }
 
-    public function test_it_validates_schema_and_throws_exception_on_invalid_data(): void
-    {
-        $path = "{$this->tempDir}/manifest.json";
-        $schema = new class extends BaseSchema
-        {
-            public function defaults(): array
-            {
-                return ['status' => 'active'];
-            }
-
-            public function rules(): array
-            {
-                return [
-                    'status' => ['required', 'in:active,paused'],
-                ];
-            }
-        };
-
-        $manifest = Manifest::open($path, $schema, $this->files);
-
-        $this->expectException(ManifestValidationException::class);
-        $manifest->save(['status' => 'invalid_value']);
-    }
-
     public function test_it_exports_json_schema_definition(): void
     {
         $schema = new class extends BaseSchema
@@ -246,14 +212,6 @@ class ManifestTest extends TestCase
             public function defaults(): array
             {
                 return ['name' => 'Demo', 'version' => 1];
-            }
-
-            public function rules(): array
-            {
-                return [
-                    'name' => ['required', 'string'],
-                    'version' => ['required', 'integer'],
-                ];
             }
 
             public function jsonSchema(): array
@@ -345,9 +303,6 @@ class ManifestTest extends TestCase
         $dispatcher->listen(ManifestMutated::class, function () use (&$eventsDispatched) {
             $eventsDispatched[] = 'mutated';
         });
-        $dispatcher->listen(ManifestValidationFailed::class, function () use (&$eventsDispatched) {
-            $eventsDispatched[] = 'validation_failed';
-        });
 
         $manifest = Manifest::open($path, files: $this->files, events: $dispatcher);
         $this->assertContains('opened', $eventsDispatched);
@@ -420,11 +375,6 @@ class ManifestTest extends TestCase
         $schema = new class extends BaseSchema
         {
             public function defaults(): array
-            {
-                return [];
-            }
-
-            public function rules(): array
             {
                 return [];
             }

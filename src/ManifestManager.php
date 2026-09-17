@@ -7,7 +7,6 @@ namespace AlexKassel\ManifestEngine;
 use AlexKassel\ManifestEngine\Contracts\ManifestSchema;
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
 use Illuminate\Contracts\Events\Dispatcher;
-use Illuminate\Contracts\Validation\Factory as ValidationFactory;
 use Illuminate\Filesystem\Filesystem;
 
 class ManifestManager
@@ -16,17 +15,13 @@ class ManifestManager
 
     protected Filesystem $files;
 
-    protected ValidationFactory $validator;
-
     public function __construct(
         ?Filesystem $files = null,
         protected readonly ManifestRegistry $registry = new ManifestRegistry,
-        ?ValidationFactory $validator = null,
         protected readonly ?Dispatcher $events = null,
         protected readonly ?string $basePath = null,
     ) {
         $this->files = $files ?? new Filesystem;
-        $this->validator = $validator ?? resolve(ValidationFactory::class);
     }
 
     /**
@@ -38,7 +33,6 @@ class ManifestManager
             path: $path,
             schema: $schema,
             files: $this->files,
-            validator: $this->validator,
             events: $this->events,
         );
     }

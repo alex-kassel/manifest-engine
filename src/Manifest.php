@@ -10,17 +10,14 @@ use AlexKassel\ManifestEngine\Events\ManifestMutated;
 use AlexKassel\ManifestEngine\Events\ManifestOpened;
 use AlexKassel\ManifestEngine\Events\ManifestSaved;
 use AlexKassel\ManifestEngine\Events\ManifestSaving;
-use AlexKassel\ManifestEngine\Events\ManifestValidationFailed;
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestLockTimeoutException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestNotFoundException;
-use AlexKassel\ManifestEngine\Exceptions\ManifestValidationException;
 use Closure;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Support\Arrayable;
-use Illuminate\Contracts\Validation\Factory as ValidationFactory;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Cache;
@@ -63,18 +60,14 @@ class Manifest
 
     protected Filesystem $files;
 
-    protected ValidationFactory $validator;
-
     public function __construct(
         string $path,
         public readonly ?ManifestSchema $schema = null,
         ?Filesystem $files = null,
-        ?ValidationFactory $validator = null,
         protected ?Dispatcher $events = null,
     ) {
         $this->path = self::resolvePath($path);
         $this->files = $files ?? new Filesystem;
-        $this->validator = $validator ?? resolve(ValidationFactory::class);
 
         $this->dispatch(new ManifestOpened($this->path));
     }
@@ -86,14 +79,12 @@ class Manifest
         string $path,
         ?ManifestSchema $schema = null,
         ?Filesystem $files = null,
-        ?ValidationFactory $validator = null,
         ?Dispatcher $events = null,
     ): self {
         return new self(
             path: $path,
             schema: $schema,
             files: $files,
-            validator: $validator,
             events: $events,
         );
     }
@@ -104,16 +95,6 @@ class Manifest
     public function setEventDispatcher(Dispatcher $events): self
     {
         $this->events = $events;
-
-        return $this;
-    }
-
-    /**
-     * Set explicit manifest validator.
-     */
-    public function setValidator(ValidationFactory $validator): self
-    {
-        $this->validator = $validator;
 
         return $this;
     }
@@ -159,43 +140,6 @@ class Manifest
     protected function dispatch(object $event): void
     {
         $this->events?->dispatch($event);
-    }
-
-    /**
-     * Validate data against the schema rules.
-     *
-     * @param  array<string, mixed>  $data
-     *
-     * @throws ManifestValidationException
-     */
-    public function validate(array $data): void
-    {
-        if ($this->schema === null || ! method_exists($this->schema, 'rules')) {
-            return;
-        }
-
-        $rules = $this->schema->rules();
-        if (empty($rules)) {
-            return;
-        }
-
-        $messages = method_exists($this->schema, 'messages') ? $this->schema->messages() : [];
-        $attributes = method_exists($this->schema, 'attributes') ? $this->schema->attributes() : [];
-
-        $validator = $this->validator->make(
-            $data,
-            $rules,
-            $messages,
-            $attributes,
-        );
-
-        if ($validator->fails()) {
-            $errors = $validator->errors()->toArray();
-
-            $this->events?->dispatch(new ManifestValidationFailed($this->path, $errors));
-
-            throw new ManifestValidationException($this->path, $errors);
-        }
     }
 
     /**
@@ -303,10 +247,6 @@ class Manifest
             throw new ManifestException("Malformed JSON in manifest [{$this->path}]: {$e->getMessage()}", 0, $e);
         }
 
-        if ($this->schema !== null) {
-            $this->validate($data);
-        }
-
         $this->isDirty = false;
 
         return $this->data = $data;
@@ -323,10 +263,6 @@ class Manifest
     {
         return $this->withLock(function () use ($data): self {
             $payloadData = $data ?? $this->data ?? $this->loadOrDefault();
-
-            if ($this->schema !== null) {
-                $this->validate($payloadData);
-            }
 
             $this->dispatch(new ManifestSaving($this->path, $payloadData));
 
@@ -376,10 +312,6 @@ class Manifest
 
             if (! is_array($mutated)) {
                 throw new ManifestException('Mutation callback must return an array.');
-            }
-
-            if ($this->schema !== null) {
-                $this->validate($mutated);
             }
 
             $json = json_encode($mutated, self::JSON_ENCODE_FLAGS);
