@@ -55,8 +55,7 @@ class ManifestManager
             throw new ManifestException("No manifest registered with alias [{$name}].");
         }
 
-        $root = $basePath ?? $this->basePath ?? (function_exists('base_path') ? base_path() : (string) (getcwd() ?: self::DEFAULT_BASE_DIR));
-        $fullPath = rtrim($root, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.$definition->filename;
+        $fullPath = $definition->fullPath($basePath ?? $this->basePath);
 
         return $this->open($fullPath, $definition->resolveSchema());
     }

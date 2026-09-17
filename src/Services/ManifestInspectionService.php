@@ -39,7 +39,7 @@ class ManifestInspectionService
         $reports = [];
 
         foreach ($manifests as $name => $def) {
-            $manifestPath = rtrim($rootPath, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.$def->filename;
+            $manifestPath = $def->fullPath($rootPath);
             $hasManifest = $this->files->exists($manifestPath);
 
             $size = $hasManifest ? (int) $this->files->size($manifestPath) : null;

@@ -21,4 +21,3 @@ interface ManifestDto extends Arrayable
      */
     public static function fromArray(array $data): static;
 }
-

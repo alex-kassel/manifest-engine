@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AlexKassel\ManifestEngine\Tests;
 
 use AlexKassel\ManifestEngine\Contracts\ManifestDto;
+use AlexKassel\ManifestEngine\DTOs\ManifestDefinition;
 use AlexKassel\ManifestEngine\Events\ManifestMutated;
 use AlexKassel\ManifestEngine\Events\ManifestOpened;
 use AlexKassel\ManifestEngine\Events\ManifestSaved;
@@ -381,5 +382,61 @@ class ManifestTest extends TestCase
 
         $this->expectException(ManifestException::class);
         $manifest->load();
+    }
+
+    public function test_path_detection_and_resolution(): void
+    {
+        $this->assertTrue(Manifest::isAbsolutePath('/var/log/manifest.json'));
+        $this->assertTrue(Manifest::isAbsolutePath('\\Windows\\manifest.json'));
+        $this->assertTrue(Manifest::isAbsolutePath('C:\\project\\manifest.json'));
+        $this->assertFalse(Manifest::isAbsolutePath('workspace.json'));
+        $this->assertFalse(Manifest::isAbsolutePath('sub/nested/workspace.json'));
+
+        // resolvePath returns absolute as-is
+        $this->assertSame('/tmp/custom.json', Manifest::resolvePath('/tmp/custom.json'));
+
+        // resolvePath resolves relative against base_path
+        $this->assertSame(base_path('manifest.json'), Manifest::resolvePath('manifest.json'));
+        $this->assertSame(base_path('sub/nested/manifest.json'), Manifest::resolvePath('sub/nested/manifest.json'));
+
+        // normalizeFilename strips base_path
+        $this->assertSame('manifest.json', Manifest::normalizeFilename('manifest.json'));
+        $this->assertSame('sub/nested.json', Manifest::normalizeFilename(base_path('sub/nested.json')));
+        $this->assertSame('sub/nested.json', Manifest::normalizeFilename('sub\\nested.json'));
+    }
+
+    public function test_manifest_open_automatically_resolves_relative_path(): void
+    {
+        $manifest = Manifest::open('test-relative.json');
+        $this->assertSame(base_path('test-relative.json'), $manifest->path);
+
+        $absPath = "{$this->tempDir}/test-absolute.json";
+        $manifestAbs = Manifest::open($absPath);
+        $this->assertSame($absPath, $manifestAbs->path);
+    }
+
+    public function test_manifest_definition_normalizes_filename_and_provides_full_path(): void
+    {
+        $schema = new class extends BaseSchema
+        {
+            public function defaults(): array
+            {
+                return [];
+            }
+
+            public function rules(): array
+            {
+                return [];
+            }
+        };
+
+        $definition = new ManifestDefinition(
+            name: 'workspace',
+            filename: base_path('nested/workspace.json'),
+            schema: $schema,
+        );
+
+        $this->assertSame('nested/workspace.json', $definition->filename);
+        $this->assertSame(base_path('nested/workspace.json'), $definition->fullPath());
     }
 }

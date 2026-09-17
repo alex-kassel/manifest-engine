@@ -24,6 +24,7 @@ use Illuminate\Contracts\Validation\Factory as ValidationFactory;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Cache;
+use InvalidArgumentException;
 use JsonException;
 use JsonSerializable;
 use Throwable;
@@ -58,17 +59,20 @@ class Manifest
 
     public int $lockTtlSeconds = self::DEFAULT_LOCK_TTL_SECONDS;
 
+    public readonly string $path;
+
     protected Filesystem $files;
 
     protected ValidationFactory $validator;
 
     public function __construct(
-        public readonly string $path,
+        string $path,
         public readonly ?ManifestSchema $schema = null,
         ?Filesystem $files = null,
         ?ValidationFactory $validator = null,
         protected ?Dispatcher $events = null,
     ) {
+        $this->path = self::resolvePath($path);
         $this->files = $files ?? new Filesystem;
         $this->validator = $validator ?? resolve(ValidationFactory::class);
 
@@ -574,5 +578,55 @@ class Manifest
         }
 
         return $this->path;
+    }
+
+    /**
+     * Determine if given path is an absolute filesystem path.
+     */
+    public static function isAbsolutePath(string $path): bool
+    {
+        return str_starts_with($path, '/')
+            || str_starts_with($path, '\\')
+            || (strlen($path) > 2 && ctype_alpha($path[0]) && $path[1] === ':');
+    }
+
+    /**
+     * Resolve a relative or absolute path to a fully-qualified absolute filesystem path.
+     */
+    public static function resolvePath(string $path, ?string $basePath = null): string
+    {
+        $trimmed = trim($path);
+        if ($trimmed === '') {
+            throw new InvalidArgumentException('Manifest path cannot be empty.');
+        }
+
+        if (self::isAbsolutePath($trimmed)) {
+            return $trimmed;
+        }
+
+        $base = $basePath ?? (function_exists('base_path') ? base_path() : (string) (getcwd() ?: '.'));
+
+        return rtrim($base, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.ltrim(str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $trimmed), DIRECTORY_SEPARATOR);
+    }
+
+    /**
+     * Normalize a path into a clean relative filename relative to project base path.
+     */
+    public static function normalizeFilename(string $path, ?string $basePath = null): string
+    {
+        $trimmed = trim($path);
+        if ($trimmed === '') {
+            return '';
+        }
+
+        $base = $basePath ?? (function_exists('base_path') ? base_path() : (string) (getcwd() ?: '.'));
+        $cleanBase = rtrim(str_replace('\\', '/', $base), '/');
+        $cleanPath = str_replace('\\', '/', $trimmed);
+
+        if (str_starts_with($cleanPath, $cleanBase)) {
+            $cleanPath = substr($cleanPath, strlen($cleanBase));
+        }
+
+        return ltrim($cleanPath, '/');
     }
 }
