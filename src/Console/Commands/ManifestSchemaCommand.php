@@ -8,7 +8,7 @@ use AlexKassel\ManifestEngine\ManifestManager;
 use Illuminate\Console\Command;
 use Illuminate\Filesystem\Filesystem;
 
-class ManifestSchemaCommand extends BaseManifestCommand
+class ManifestSchemaCommand extends Command
 {
     /**
      * The name and signature of the console command.
@@ -27,10 +27,47 @@ class ManifestSchemaCommand extends BaseManifestCommand
     protected $description = 'Generate and display or export the JSON Schema for a registered manifest';
 
     public function __construct(
-        ManifestManager $manager,
+        protected readonly ManifestManager $manager,
         protected readonly Filesystem $files,
     ) {
-        parent::__construct($manager);
+        parent::__construct();
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    protected function registeredNames(): array
+    {
+        return array_keys($this->manager->registry()->all());
+    }
+
+    /**
+     * Resolve target manifest alias with interactive choice fallback.
+     */
+    protected function resolveManifestName(string $prompt = 'Select a manifest:'): ?string
+    {
+        $nameArgument = $this->argument('name');
+
+        if (is_string($nameArgument) && trim($nameArgument) !== '') {
+            return trim($nameArgument);
+        }
+
+        $registered = $this->registeredNames();
+
+        if (empty($registered)) {
+            $this->comment('No manifest definitions are registered in this application.');
+
+            return null;
+        }
+
+        if (! $this->input->isInteractive()) {
+            $this->error('Please specify a manifest name. Available manifests: '.implode(', ', $registered));
+
+            return null;
+        }
+
+        /** @var string */
+        return $this->choice($prompt, $registered);
     }
 
     /**

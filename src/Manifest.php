@@ -6,18 +6,15 @@ namespace AlexKassel\ManifestEngine;
 
 use AlexKassel\ManifestEngine\Contracts\ManifestDto;
 use AlexKassel\ManifestEngine\Contracts\ManifestSchema;
-use AlexKassel\ManifestEngine\Events\ManifestMutated;
-use AlexKassel\ManifestEngine\Events\ManifestOpened;
-use AlexKassel\ManifestEngine\Events\ManifestSaved;
-use AlexKassel\ManifestEngine\Events\ManifestSaving;
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestLockTimeoutException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestNotFoundException;
+use ArrayAccess;
 use Closure;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Cache\LockTimeoutException;
-use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Support\Arrayable;
+use Illuminate\Contracts\Support\Jsonable;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Cache;
@@ -26,9 +23,12 @@ use JsonException;
 use JsonSerializable;
 use Throwable;
 
-class Manifest
+/**
+ * @implements ArrayAccess<string, mixed>
+ */
+class Manifest implements Arrayable, ArrayAccess, Jsonable, JsonSerializable
 {
-    public const JSON_ENCODE_FLAGS = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES;
+    public const JSON_ENCODE_FLAGS = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE;
 
     public const JSON_DECODE_DEPTH = 512;
 
@@ -64,12 +64,9 @@ class Manifest
         string $path,
         public readonly ?ManifestSchema $schema = null,
         ?Filesystem $files = null,
-        protected ?Dispatcher $events = null,
     ) {
         $this->path = self::resolvePath($path);
         $this->files = $files ?? new Filesystem;
-
-        $this->dispatch(new ManifestOpened($this->path));
     }
 
     /**
@@ -79,24 +76,12 @@ class Manifest
         string $path,
         ?ManifestSchema $schema = null,
         ?Filesystem $files = null,
-        ?Dispatcher $events = null,
     ): self {
         return new self(
             path: $path,
             schema: $schema,
             files: $files,
-            events: $events,
         );
-    }
-
-    /**
-     * Set explicit event dispatcher.
-     */
-    public function setEventDispatcher(Dispatcher $events): self
-    {
-        $this->events = $events;
-
-        return $this;
     }
 
     /**
@@ -135,14 +120,6 @@ class Manifest
     }
 
     /**
-     * Dispatch an event if dispatcher is available.
-     */
-    protected function dispatch(object $event): void
-    {
-        $this->events?->dispatch($event);
-    }
-
-    /**
      * Check if the manifest file exists on disk.
      */
     public function exists(): bool
@@ -159,7 +136,9 @@ class Manifest
             return null;
         }
 
-        return $this->files->hash($this->path, $algorithm);
+        $hash = $this->files->hash($this->path, $algorithm);
+
+        return $hash !== false ? $hash : null;
     }
 
     /**
@@ -244,8 +223,9 @@ class Manifest
         if (! $this->exists()) {
             if ($this->schema !== null) {
                 $this->isDirty = false;
+                $this->data = $this->schema->defaults();
 
-                return $this->data = $this->schema->defaults();
+                return $this->data;
             }
 
             throw new ManifestNotFoundException($this->path);
@@ -259,39 +239,29 @@ class Manifest
         }
 
         $this->isDirty = false;
+        $this->data = $data;
 
-        return $this->data = $data;
+        return $this->data;
     }
 
     /**
-     * Save data directly into manifest file atomically using Filesystem::replace.
+     * Save data directly into manifest file atomically.
      *
-     * @param  array<string, mixed>|null  $data
+     * @param  array<string, mixed>|Arrayable|null  $data
      *
      * @throws ManifestException
      */
-    public function save(?array $data = null): self
+    public function save(array|Arrayable|null $data = null): self
     {
-        return $this->withLock(function () use ($data): self {
-            $payloadData = $data ?? $this->data ?? $this->loadOrDefault();
+        $payload = match (true) {
+            $data instanceof Arrayable => $data->toArray(),
+            is_array($data) => $data,
+            default => $this->data ?? $this->loadOrDefault(),
+        };
 
-            $this->dispatch(new ManifestSaving($this->path, $payloadData));
+        $this->mutate(static fn (array $current): array => $payload);
 
-            $json = json_encode($payloadData, self::JSON_ENCODE_FLAGS);
-            if ($json === false) {
-                throw new ManifestException("Failed to serialize manifest JSON for [{$this->path}].");
-            }
-
-            $this->files->ensureDirectoryExists(dirname($this->path));
-            $this->files->replace($this->path, $json."\n");
-
-            $this->data = $payloadData;
-            $this->isDirty = false;
-
-            $this->dispatch(new ManifestSaved($this->path, $payloadData));
-
-            return $this;
-        });
+        return $this;
     }
 
     /**
@@ -336,10 +306,43 @@ class Manifest
             $this->data = $mutated;
             $this->isDirty = false;
 
-            $this->dispatch(new ManifestMutated($this->path, $before, $mutated));
-
             return $mutated;
         });
+    }
+
+    /**
+     * Mutate manifest data using a typed DTO inside an atomic lock transaction.
+     *
+     * @template T of ManifestDto
+     *
+     * @param  class-string<T>  $dtoClass
+     * @param  Closure(T): (T|void)  $mutator
+     * @return T
+     *
+     * @throws ManifestException
+     * @throws InvalidArgumentException
+     */
+    public function mutateDto(string $dtoClass, Closure $mutator): ManifestDto
+    {
+        if (! is_subclass_of($dtoClass, ManifestDto::class)) {
+            throw new InvalidArgumentException("Class [{$dtoClass}] must implement ".ManifestDto::class);
+        }
+
+        $resultDto = null;
+
+        $this->mutate(function (array $currentData) use ($dtoClass, $mutator, &$resultDto): array {
+            $dto = $dtoClass::fromArray($currentData);
+
+            $mutated = $mutator($dto);
+            $finalDto = $mutated instanceof ManifestDto ? $mutated : $dto;
+
+            $resultDto = $finalDto;
+
+            return $finalDto->toArray();
+        });
+
+        /** @var T $resultDto */
+        return $resultDto;
     }
 
     /**
@@ -353,57 +356,22 @@ class Manifest
     }
 
     /**
-     * Hydrate the manifest data into a typed DTO object or custom structure.
+     * Hydrate the manifest data into a typed DTO object.
      *
-     * @template T of object
+     * @template T of ManifestDto
      *
-     * @param  class-string<T>|callable(array<string, mixed>): T  $target
+     * @param  class-string<T>  $dtoClass
      * @return T
      *
-     * @throws ManifestException
+     * @throws InvalidArgumentException
      */
-    public function toDto(string|callable $target): object
+    public function toDto(string $dtoClass): ManifestDto
     {
-        if (is_callable($target)) {
-            return $target($this->all());
+        if (! is_subclass_of($dtoClass, ManifestDto::class)) {
+            throw new InvalidArgumentException("Class [{$dtoClass}] must implement ".ManifestDto::class);
         }
 
-        if (is_subclass_of($target, ManifestDto::class) || method_exists($target, 'fromArray')) {
-            return $target::fromArray($this->all());
-        }
-
-        if (method_exists($target, 'from')) {
-            return $target::from($this->all());
-        }
-
-        try {
-            return new $target(...$this->all());
-        } catch (Throwable $e) {
-            throw new ManifestException("Failed to instantiate DTO [{$target}]: {$e->getMessage()}", 0, $e);
-        }
-    }
-
-    /**
-     * Save a typed DTO object back to the manifest.
-     *
-     * @throws ManifestException
-     */
-    public function saveDto(object $dto): void
-    {
-        if ($dto instanceof Arrayable || method_exists($dto, 'toArray')) {
-            $this->save($dto->toArray());
-
-            return;
-        }
-
-        if ($dto instanceof JsonSerializable) {
-            $data = $dto->jsonSerialize();
-            $this->save(is_array($data) ? $data : (array) $data);
-
-            return;
-        }
-
-        $this->save(get_object_vars($dto));
+        return $dtoClass::fromArray($this->all());
     }
 
     /**
@@ -518,7 +486,7 @@ class Manifest
         }
 
         $base = function_exists('base_path') ? base_path() : (string) (getcwd() ?: '.');
-        if (! str_starts_with($this->path, DIRECTORY_SEPARATOR)) {
+        if (! self::isAbsolutePath($this->path)) {
             $combined = rtrim($base, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.$this->path;
             $realCombinedDir = realpath(dirname($combined));
             if ($realCombinedDir !== false) {
@@ -529,6 +497,81 @@ class Manifest
         }
 
         return $this->path;
+    }
+
+    /**
+     * Get the instance as an array.
+     *
+     * @return array<string, mixed>
+     */
+    public function toArray(): array
+    {
+        return $this->all();
+    }
+
+    /**
+     * Convert the object to its JSON representation.
+     *
+     * @param  int  $options
+     *
+     * @throws ManifestException
+     */
+    public function toJson($options = 0): string
+    {
+        $flags = $options === 0 ? self::JSON_ENCODE_FLAGS : $options;
+        $json = json_encode($this->all(), $flags);
+
+        if ($json === false) {
+            throw new ManifestException("Failed to encode manifest JSON for [{$this->path}].");
+        }
+
+        return $json;
+    }
+
+    /**
+     * Specify data which should be serialized to JSON.
+     *
+     * @return array<string, mixed>
+     */
+    public function jsonSerialize(): mixed
+    {
+        return $this->all();
+    }
+
+    /**
+     * Determine if an offset exists.
+     */
+    public function offsetExists(mixed $offset): bool
+    {
+        return $this->has((string) $offset);
+    }
+
+    /**
+     * Get the value at a given offset.
+     */
+    public function offsetGet(mixed $offset): mixed
+    {
+        return $this->get((string) $offset);
+    }
+
+    /**
+     * Set the value at a given offset.
+     */
+    public function offsetSet(mixed $offset, mixed $value): void
+    {
+        if ($offset === null) {
+            throw new InvalidArgumentException('Cannot append to manifest without an explicit key.');
+        }
+
+        $this->set((string) $offset, $value);
+    }
+
+    /**
+     * Unset the value at a given offset.
+     */
+    public function offsetUnset(mixed $offset): void
+    {
+        $this->forget((string) $offset);
     }
 
     /**

@@ -4,10 +4,11 @@ declare(strict_types=1);
 
 namespace AlexKassel\ManifestEngine\Console\Commands;
 
+use AlexKassel\ManifestEngine\Manifest;
 use AlexKassel\ManifestEngine\ManifestManager;
 use Illuminate\Console\Command;
 
-class ManifestMakeCommand extends BaseManifestCommand
+class ManifestMakeCommand extends Command
 {
     /**
      * The name and signature of the console command.
@@ -26,9 +27,17 @@ class ManifestMakeCommand extends BaseManifestCommand
     protected $description = 'Initialize and scaffold a manifest file with its schema defaults';
 
     public function __construct(
-        ManifestManager $manager,
+        protected readonly ManifestManager $manager,
     ) {
-        parent::__construct($manager);
+        parent::__construct();
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    protected function registeredNames(): array
+    {
+        return array_keys($this->manager->registry()->all());
     }
 
     /**
@@ -84,13 +93,7 @@ class ManifestMakeCommand extends BaseManifestCommand
             $manifest = $this->manager->get($target);
         } else {
             $path = str_ends_with($target, '.json') ? $target : $target.'.json';
-            if (str_starts_with($path, DIRECTORY_SEPARATOR)) {
-                $fullPath = $path;
-            } else {
-                $root = function_exists('base_path') ? base_path() : (string) (getcwd() ?: '.');
-                $fullPath = rtrim($root, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.$path;
-            }
-            $manifest = $this->manager->open($fullPath);
+            $manifest = $this->manager->open(Manifest::resolvePath($path));
         }
 
         if ($manifest->exists()) {

@@ -6,16 +6,12 @@ namespace AlexKassel\ManifestEngine\Tests;
 
 use AlexKassel\ManifestEngine\Contracts\ManifestDto;
 use AlexKassel\ManifestEngine\DTOs\ManifestDefinition;
-use AlexKassel\ManifestEngine\Events\ManifestMutated;
-use AlexKassel\ManifestEngine\Events\ManifestOpened;
-use AlexKassel\ManifestEngine\Events\ManifestSaved;
-use AlexKassel\ManifestEngine\Events\ManifestSaving;
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestLockTimeoutException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestNotFoundException;
 use AlexKassel\ManifestEngine\Manifest;
 use AlexKassel\ManifestEngine\Schemas\BaseSchema;
-use Illuminate\Events\Dispatcher;
+use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Cache;
 
@@ -41,14 +37,6 @@ class TestManifestDto implements ManifestDto
             version: (int) ($data['version'] ?? 0),
         );
     }
-}
-
-class SimpleUserDto
-{
-    public function __construct(
-        public string $username,
-        public bool $active = true,
-    ) {}
 }
 
 class ManifestTest extends TestCase
@@ -239,84 +227,51 @@ class ManifestTest extends TestCase
         $this->assertSame('string', $content['properties']['name']['type']);
     }
 
-    public function test_it_hydrates_and_saves_dto_contract(): void
+    public function test_it_mutates_dto_contract(): void
     {
         $path = "{$this->tempDir}/manifest.json";
         $this->files->put($path, json_encode(['name' => 'Analytics', 'version' => 2]));
 
         $manifest = Manifest::open($path, files: $this->files);
 
-        $dto = $manifest->toDto(TestManifestDto::class);
-        $this->assertInstanceOf(TestManifestDto::class, $dto);
-        $this->assertSame('Analytics', $dto->name);
-        $this->assertSame(2, $dto->version);
+        $dto = $manifest->mutateDto(TestManifestDto::class, function (TestManifestDto $dto): TestManifestDto {
+            $this->assertSame('Analytics', $dto->name);
+            $this->assertSame(2, $dto->version);
 
-        $dto->name = 'Analytics V3';
-        $dto->version = 3;
-        $manifest->saveDto($dto);
+            $dto->name = 'Analytics V3';
+            $dto->version = 3;
+
+            return $dto;
+        });
+
+        $this->assertInstanceOf(TestManifestDto::class, $dto);
+        $this->assertSame('Analytics V3', $dto->name);
+        $this->assertSame(3, $dto->version);
 
         $this->assertSame('Analytics V3', $manifest->get('name'));
         $this->assertSame(3, $manifest->get('version'));
     }
 
-    public function test_it_hydrates_dto_with_constructor_promotion(): void
-    {
-        $path = "{$this->tempDir}/manifest.json";
-        $this->files->put($path, json_encode(['username' => 'alex', 'active' => true]));
-
-        $manifest = Manifest::open($path, files: $this->files);
-        $dto = $manifest->toDto(SimpleUserDto::class);
-
-        $this->assertInstanceOf(SimpleUserDto::class, $dto);
-        $this->assertSame('alex', $dto->username);
-        $this->assertTrue($dto->active);
-    }
-
-    public function test_it_transforms_data_via_callable(): void
+    public function test_to_dto_throws_if_class_does_not_implement_manifest_dto(): void
     {
         $path = "{$this->tempDir}/manifest.json";
         $this->files->put($path, json_encode(['title' => 'My App']));
 
         $manifest = Manifest::open($path, files: $this->files);
-        $dto = $manifest->toDto(fn (array $data) => (object) ['upper' => strtoupper($data['title'])]);
 
-        $this->assertSame('MY APP', $dto->upper);
+        $this->expectException(\InvalidArgumentException::class);
+        $manifest->toDto(\stdClass::class);
     }
 
-    public function test_it_dispatches_lifecycle_events(): void
+    public function test_mutate_dto_throws_if_class_does_not_implement_manifest_dto(): void
     {
         $path = "{$this->tempDir}/manifest.json";
-        $this->files->put($path, json_encode(['key' => 'old']));
+        $this->files->put($path, json_encode(['title' => 'My App']));
 
-        $dispatcher = new Dispatcher;
-        $eventsDispatched = [];
+        $manifest = Manifest::open($path, files: $this->files);
 
-        $dispatcher->listen(ManifestOpened::class, function () use (&$eventsDispatched) {
-            $eventsDispatched[] = 'opened';
-        });
-        $dispatcher->listen(ManifestSaving::class, function () use (&$eventsDispatched) {
-            $eventsDispatched[] = 'saving';
-        });
-        $dispatcher->listen(ManifestSaved::class, function () use (&$eventsDispatched) {
-            $eventsDispatched[] = 'saved';
-        });
-        $dispatcher->listen(ManifestMutated::class, function () use (&$eventsDispatched) {
-            $eventsDispatched[] = 'mutated';
-        });
-
-        $manifest = Manifest::open($path, files: $this->files, events: $dispatcher);
-        $this->assertContains('opened', $eventsDispatched);
-
-        $manifest->mutate(function (array $data): array {
-            $data['key'] = 'new';
-
-            return $data;
-        });
-        $this->assertContains('mutated', $eventsDispatched);
-
-        $manifest->save(['key' => 'manual_save']);
-        $this->assertContains('saving', $eventsDispatched);
-        $this->assertContains('saved', $eventsDispatched);
+        $this->expectException(\InvalidArgumentException::class);
+        $manifest->mutateDto(\stdClass::class, fn ($dto) => $dto);
     }
 
     public function test_it_throws_when_manifest_not_found_without_schema(): void
@@ -388,5 +343,100 @@ class ManifestTest extends TestCase
 
         $this->assertSame('nested/workspace.json', $definition->filename);
         $this->assertSame(base_path('nested/workspace.json'), $definition->fullPath());
+    }
+
+    public function test_it_implements_array_access(): void
+    {
+        $path = "{$this->tempDir}/array_access.json";
+        $this->files->put($path, json_encode(['foo' => 'bar', 'nested' => ['key' => 'value']]));
+
+        $manifest = Manifest::open($path, files: $this->files);
+
+        $this->assertTrue(isset($manifest['foo']));
+        $this->assertFalse(isset($manifest['missing']));
+        $this->assertSame('bar', $manifest['foo']);
+        $this->assertSame('value', $manifest['nested.key']);
+
+        $manifest['new_key'] = 123;
+        $this->assertTrue($manifest->isDirty());
+        $this->assertSame(123, $manifest['new_key']);
+
+        unset($manifest['foo']);
+        $this->assertFalse(isset($manifest['foo']));
+    }
+
+    public function test_it_implements_arrayable_and_jsonable_and_json_serializable(): void
+    {
+        $path = "{$this->tempDir}/contracts.json";
+        $data = ['name' => 'Demo', 'active' => true];
+        $this->files->put($path, json_encode($data));
+
+        $manifest = Manifest::open($path, files: $this->files);
+
+        // Arrayable
+        $this->assertSame($data, $manifest->toArray());
+
+        // Jsonable
+        $this->assertSame(json_encode($data, Manifest::JSON_ENCODE_FLAGS), $manifest->toJson());
+
+        // JsonSerializable
+        $this->assertSame(json_encode($data), json_encode($manifest));
+    }
+
+    public function test_it_saves_arrayable_object(): void
+    {
+        $path = "{$this->tempDir}/arrayable_save.json";
+        $manifest = Manifest::open($path, files: $this->files);
+
+        $arrayable = new class implements Arrayable
+        {
+            public function toArray(): array
+            {
+                return ['from_arrayable' => 'yes'];
+            }
+        };
+
+        $manifest->save($arrayable);
+
+        $this->assertSame('yes', $manifest->get('from_arrayable'));
+        $this->assertSame('yes', $manifest->fresh()->get('from_arrayable'));
+    }
+
+    public function test_it_mutates_dto_in_place_when_mutator_returns_void(): void
+    {
+        $path = "{$this->tempDir}/manifest_inplace.json";
+        $this->files->put($path, json_encode(['name' => 'Original', 'version' => 1]));
+
+        $manifest = Manifest::open($path, files: $this->files);
+
+        $dto = $manifest->mutateDto(TestManifestDto::class, function (TestManifestDto $dto): void {
+            $dto->name = 'Mutated In Place';
+            $dto->version = 99;
+        });
+
+        $this->assertSame('Mutated In Place', $dto->name);
+        $this->assertSame(99, $dto->version);
+        $this->assertSame('Mutated In Place', $manifest->get('name'));
+        $this->assertSame(99, $manifest->get('version'));
+    }
+
+    public function test_manifest_manager_allows_fluent_registration_chaining(): void
+    {
+        $manager = new \AlexKassel\ManifestEngine\ManifestManager($this->files);
+        $schema = new class extends BaseSchema
+        {
+            public function defaults(): array
+            {
+                return [];
+            }
+        };
+
+        $result = $manager
+            ->register('one', 'one.json', $schema)
+            ->register('two', 'two.json', $schema);
+
+        $this->assertSame($manager, $result);
+        $this->assertTrue($manager->has('one'));
+        $this->assertTrue($manager->has('two'));
     }
 }

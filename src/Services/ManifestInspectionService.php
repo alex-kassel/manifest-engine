@@ -15,11 +15,6 @@ class ManifestInspectionService
 {
     public const DATE_FORMAT = 'Y-m-d H:i:s';
 
-    public const DEFAULT_BASE_DIR = '.';
-
-    public const MISSING_FILE_MESSAGE = 'File does not exist on disk.';
-
-    public const DECIMAL_PRECISION = 1;
 
     public function __construct(
         protected readonly ManifestManager $manager,
@@ -34,7 +29,7 @@ class ManifestInspectionService
     public function getStatusReports(?string $basePath = null): array
     {
         $manifests = $this->manager->registry()->all();
-        $rootPath = $basePath ?? (function_exists('base_path') ? base_path() : (string) (getcwd() ?: self::DEFAULT_BASE_DIR));
+        $rootPath = $basePath ?? (function_exists('base_path') ? base_path() : (string) (getcwd() ?: '.'));
         $reports = [];
 
         foreach ($manifests as $name => $def) {
@@ -94,7 +89,7 @@ class ManifestInspectionService
                         path: $manifest->path,
                         exists: false,
                         isValid: false,
-                        errorMessage: self::MISSING_FILE_MESSAGE,
+                        errorMessage: 'File does not exist on disk.',
                     );
 
                     continue;
@@ -129,6 +124,6 @@ class ManifestInspectionService
      */
     public function formatBytes(int $bytes): string
     {
-        return Number::fileSize($bytes, precision: $bytes < 1024 ? 0 : self::DECIMAL_PRECISION);
+        return Number::fileSize($bytes, precision: $bytes < 1024 ? 0 : 1);
     }
 }

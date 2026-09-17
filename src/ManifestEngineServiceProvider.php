@@ -8,7 +8,6 @@ use AlexKassel\ManifestEngine\Console\Commands\ManifestMakeCommand;
 use AlexKassel\ManifestEngine\Console\Commands\ManifestSchemaCommand;
 use AlexKassel\ManifestEngine\Console\Commands\ManifestStatusCommand;
 use AlexKassel\ManifestEngine\Console\Commands\ManifestValidateCommand;
-use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\ServiceProvider;
 
@@ -29,7 +28,6 @@ class ManifestEngineServiceProvider extends ServiceProvider
             return new ManifestManager(
                 files: $app->make(Filesystem::class),
                 registry: $app->make(ManifestRegistry::class),
-                events: $app->make(Dispatcher::class),
                 basePath: function_exists('base_path') ? base_path() : null,
             );
         });

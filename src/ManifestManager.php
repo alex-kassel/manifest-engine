@@ -6,19 +6,15 @@ namespace AlexKassel\ManifestEngine;
 
 use AlexKassel\ManifestEngine\Contracts\ManifestSchema;
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
-use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Filesystem\Filesystem;
 
 class ManifestManager
 {
-    public const DEFAULT_BASE_DIR = '.';
-
     protected Filesystem $files;
 
     public function __construct(
         ?Filesystem $files = null,
         protected readonly ManifestRegistry $registry = new ManifestRegistry,
-        protected readonly ?Dispatcher $events = null,
         protected readonly ?string $basePath = null,
     ) {
         $this->files = $files ?? new Filesystem;
@@ -33,7 +29,6 @@ class ManifestManager
             path: $path,
             schema: $schema,
             files: $this->files,
-            events: $this->events,
         );
     }
 
@@ -74,14 +69,16 @@ class ManifestManager
         string|ManifestSchema $schema,
         ?string $description = null,
         array $metadata = [],
-    ): ManifestRegistry {
-        return $this->registry->register(
+    ): self {
+        $this->registry->register(
             name: $name,
             filename: $filename,
             schema: $schema,
             description: $description,
             metadata: $metadata,
         );
+
+        return $this;
     }
 
     /**
