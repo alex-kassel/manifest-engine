@@ -217,6 +217,17 @@ class Manifest
     }
 
     /**
+     * Invalidate in-memory cache without eagerly reloading from disk.
+     */
+    public function invalidate(): self
+    {
+        $this->data = null;
+        $this->isDirty = false;
+
+        return $this;
+    }
+
+    /**
      * Load manifest content as an array with shared lock protection.
      *
      * @return array<string, mixed>
