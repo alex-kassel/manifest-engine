@@ -8,18 +8,8 @@ use AlexKassel\ManifestEngine\ManifestManager;
 use Illuminate\Console\Command;
 use Illuminate\Filesystem\Filesystem;
 
-class ManifestSchemaCommand extends Command
+class ManifestSchemaCommand extends BaseManifestCommand
 {
-    public const JSON_FLAGS = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES;
-
-    public const NO_SCHEMA_MESSAGE = 'The selected manifest does not define a schema.';
-
-    public const MISSING_NAME_MESSAGE = 'Please specify a manifest name.';
-
-    public const EMPTY_REGISTRY_MESSAGE = 'No manifest definitions are registered in this application.';
-
-    public const NEWLINE = "\n";
-
     /**
      * The name and signature of the console command.
      *
@@ -37,10 +27,10 @@ class ManifestSchemaCommand extends Command
     protected $description = 'Generate and display or export the JSON Schema for a registered manifest';
 
     public function __construct(
-        protected readonly ManifestManager $manager,
+        ManifestManager $manager,
         protected readonly Filesystem $files,
     ) {
-        parent::__construct();
+        parent::__construct($manager);
     }
 
     /**
@@ -48,33 +38,17 @@ class ManifestSchemaCommand extends Command
      */
     public function handle(): int
     {
-        $registry = $this->manager->registry();
-        $registered = array_keys($registry->all());
-        $nameArgument = $this->argument('name');
+        $name = $this->resolveManifestName('Select a manifest to generate JSON Schema for:');
 
-        if (! is_string($nameArgument) || trim($nameArgument) === '') {
-            if (empty($registered)) {
-                $this->comment(self::EMPTY_REGISTRY_MESSAGE);
-
-                return self::SUCCESS;
-            }
-
-            if ($this->input->isInteractive()) {
-                /** @var string $name */
-                $name = $this->choice('Select a manifest to generate JSON Schema for:', $registered);
-            } else {
-                $this->error(self::MISSING_NAME_MESSAGE.' Available manifests: '.implode(', ', $registered));
-
-                return self::FAILURE;
-            }
-        } else {
-            $name = trim($nameArgument);
+        if ($name === null) {
+            return empty($this->registeredNames()) ? self::SUCCESS : self::FAILURE;
         }
 
-        $def = $registry->get($name);
+        $def = $this->manager->registry()->get($name);
 
         if ($def === null) {
             $this->error("No manifest registered with alias [{$name}].");
+            $registered = $this->registeredNames();
             if (! empty($registered)) {
                 $this->line('<comment>Available manifests:</comment> '.implode(', ', $registered));
             }
@@ -84,24 +58,24 @@ class ManifestSchemaCommand extends Command
 
         $schemaInstance = $def->resolveSchema();
         if ($schemaInstance === null) {
-            $this->warn(self::NO_SCHEMA_MESSAGE);
+            $this->warn('The selected manifest does not define a schema.');
 
             return self::FAILURE;
         }
 
         $compiled = $schemaInstance->jsonSchema();
         if ($compiled === null) {
-            $this->warn(self::NO_SCHEMA_MESSAGE);
+            $this->warn('The selected manifest does not define a schema.');
 
             return self::FAILURE;
         }
 
-        $encoded = (string) json_encode($compiled, self::JSON_FLAGS);
+        $encoded = (string) json_encode($compiled, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
 
         $outputPath = $this->option('output');
         if (is_string($outputPath) && trim($outputPath) !== '') {
             $this->files->ensureDirectoryExists(dirname($outputPath));
-            $this->files->put($outputPath, $encoded.self::NEWLINE);
+            $this->files->put($outputPath, $encoded."\n");
             $this->info("JSON Schema written to [{$outputPath}].");
 
             return self::SUCCESS;

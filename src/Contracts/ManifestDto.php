@@ -4,15 +4,16 @@ declare(strict_types=1);
 
 namespace AlexKassel\ManifestEngine\Contracts;
 
-interface ManifestDto
-{
-    /**
-     * Convert the DTO to an array for manifest storage.
-     *
-     * @return array<string, mixed>
-     */
-    public function toArray(): array;
+use Illuminate\Contracts\Support\Arrayable;
 
+/**
+ * @template TKey of array-key
+ * @template TValue
+ *
+ * @extends Arrayable<TKey, TValue>
+ */
+interface ManifestDto extends Arrayable
+{
     /**
      * Create a DTO instance from raw manifest data.
      *
@@ -20,3 +21,4 @@ interface ManifestDto
      */
     public static function fromArray(array $data): static;
 }
+

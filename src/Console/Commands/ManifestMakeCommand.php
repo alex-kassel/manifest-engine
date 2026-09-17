@@ -7,24 +7,8 @@ namespace AlexKassel\ManifestEngine\Console\Commands;
 use AlexKassel\ManifestEngine\ManifestManager;
 use Illuminate\Console\Command;
 
-class ManifestMakeCommand extends Command
+class ManifestMakeCommand extends BaseManifestCommand
 {
-    public const DEFAULT_EXT = '.json';
-
-    public const DEFAULT_EMPTY_DATA = [];
-
-    public const DEFAULT_BASE_DIR = '.';
-
-    public const CUSTOM_PATH_CHOICE = '[Custom file path...]';
-
-    public const MISSING_NAME_MESSAGE = 'Please specify a manifest alias name or file path to initialize.';
-
-    public const PATH_TRAVERSAL_ERROR = 'Path traversal is not allowed in manifest path.';
-
-    public const PROMPT_TARGET_LABEL = 'Enter the manifest alias name or file path to initialize:';
-
-    public const PROMPT_CUSTOM_PATH_LABEL = 'Enter relative file path (e.g. workspace.json):';
-
     /**
      * The name and signature of the console command.
      *
@@ -42,9 +26,9 @@ class ManifestMakeCommand extends Command
     protected $description = 'Initialize and scaffold a manifest file with its schema defaults';
 
     public function __construct(
-        protected readonly ManifestManager $manager,
+        ManifestManager $manager,
     ) {
-        parent::__construct();
+        parent::__construct($manager);
     }
 
     /**
@@ -56,24 +40,22 @@ class ManifestMakeCommand extends Command
         $targetArgument = $this->argument('name');
 
         if (! is_string($targetArgument) || trim($targetArgument) === '') {
-            $registered = array_keys($registry->all());
+            $registered = $this->registeredNames();
 
             if ($this->input->isInteractive()) {
                 if (! empty($registered)) {
-                    $options = array_merge($registered, [self::CUSTOM_PATH_CHOICE]);
-                    /** @var string $choice */
-                    $choice = $this->choice('Select a registered manifest or enter a custom path:', $options);
+                    $choice = $this->choice('Select a registered manifest or enter a custom path:', array_merge($registered, ['[Custom file path...]']));
 
-                    if ($choice === self::CUSTOM_PATH_CHOICE) {
-                        $target = (string) $this->ask(self::PROMPT_CUSTOM_PATH_LABEL);
+                    if ($choice === '[Custom file path...]') {
+                        $target = (string) $this->ask('Enter relative file path (e.g. workspace.json):');
                     } else {
-                        $target = $choice;
+                        $target = (string) $choice;
                     }
                 } else {
-                    $target = (string) $this->ask(self::PROMPT_TARGET_LABEL);
+                    $target = (string) $this->ask('Enter the manifest alias name or file path to initialize:');
                 }
             } else {
-                $this->error(self::MISSING_NAME_MESSAGE);
+                $this->error('Please specify a manifest alias name or file path to initialize.');
                 if (! empty($registered)) {
                     $this->line('<comment>Available registered manifests:</comment> '.implode(', ', $registered));
                 }
@@ -85,13 +67,13 @@ class ManifestMakeCommand extends Command
         }
 
         if (trim($target) === '') {
-            $this->error(self::MISSING_NAME_MESSAGE);
+            $this->error('Please specify a manifest alias name or file path to initialize.');
 
             return self::FAILURE;
         }
 
         if (str_contains($target, '..')) {
-            $this->error(self::PATH_TRAVERSAL_ERROR);
+            $this->error('Path traversal is not allowed in manifest path.');
 
             return self::FAILURE;
         }
@@ -101,9 +83,13 @@ class ManifestMakeCommand extends Command
         if ($def !== null) {
             $manifest = $this->manager->get($target);
         } else {
-            $path = str_ends_with($target, self::DEFAULT_EXT) ? $target : $target.self::DEFAULT_EXT;
-            $root = function_exists('base_path') ? base_path() : (string) (getcwd() ?: self::DEFAULT_BASE_DIR);
-            $fullPath = rtrim($root, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.$path;
+            $path = str_ends_with($target, '.json') ? $target : $target.'.json';
+            if (str_starts_with($path, DIRECTORY_SEPARATOR)) {
+                $fullPath = $path;
+            } else {
+                $root = function_exists('base_path') ? base_path() : (string) (getcwd() ?: '.');
+                $fullPath = rtrim($root, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.$path;
+            }
             $manifest = $this->manager->open($fullPath);
         }
 
@@ -114,7 +100,7 @@ class ManifestMakeCommand extends Command
                 return self::FAILURE;
             }
 
-            $initialData = $manifest->schema !== null ? $manifest->schema->defaults() : self::DEFAULT_EMPTY_DATA;
+            $initialData = $manifest->schema !== null ? $manifest->schema->defaults() : [];
             $manifest->save($initialData);
         } else {
             $manifest->init();

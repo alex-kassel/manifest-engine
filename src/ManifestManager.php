@@ -6,10 +6,8 @@ namespace AlexKassel\ManifestEngine;
 
 use AlexKassel\ManifestEngine\Contracts\ManifestSchema;
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
-use AlexKassel\ManifestEngine\Hydration\DtoHydrator;
-use AlexKassel\ManifestEngine\Validation\ManifestValidator;
-use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Contracts\Validation\Factory as ValidationFactory;
 use Illuminate\Filesystem\Filesystem;
 
 class ManifestManager
@@ -18,22 +16,17 @@ class ManifestManager
 
     protected Filesystem $files;
 
-    protected ManifestValidator $validator;
-
-    protected DtoHydrator $hydrator;
+    protected ValidationFactory $validator;
 
     public function __construct(
         ?Filesystem $files = null,
         protected readonly ManifestRegistry $registry = new ManifestRegistry,
-        protected readonly ?LockProvider $lockProvider = null,
-        ?ManifestValidator $validator = null,
-        ?DtoHydrator $hydrator = null,
+        ?ValidationFactory $validator = null,
         protected readonly ?Dispatcher $events = null,
         protected readonly ?string $basePath = null,
     ) {
         $this->files = $files ?? new Filesystem;
-        $this->validator = $validator ?? ManifestValidator::createStandalone($this->events);
-        $this->hydrator = $hydrator ?? new DtoHydrator;
+        $this->validator = $validator ?? resolve(ValidationFactory::class);
     }
 
     /**
@@ -45,9 +38,7 @@ class ManifestManager
             path: $path,
             schema: $schema,
             files: $this->files,
-            lockProvider: $this->lockProvider,
             validator: $this->validator,
-            hydrator: $this->hydrator,
             events: $this->events,
         );
     }

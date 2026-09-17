@@ -4,31 +4,35 @@ declare(strict_types=1);
 
 namespace AlexKassel\ManifestEngine;
 
+use AlexKassel\ManifestEngine\Contracts\ManifestDto;
 use AlexKassel\ManifestEngine\Contracts\ManifestSchema;
 use AlexKassel\ManifestEngine\Events\ManifestMutated;
 use AlexKassel\ManifestEngine\Events\ManifestOpened;
 use AlexKassel\ManifestEngine\Events\ManifestSaved;
 use AlexKassel\ManifestEngine\Events\ManifestSaving;
+use AlexKassel\ManifestEngine\Events\ManifestValidationFailed;
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
+use AlexKassel\ManifestEngine\Exceptions\ManifestLockTimeoutException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestNotFoundException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestValidationException;
-use AlexKassel\ManifestEngine\Hydration\DtoHydrator;
-use AlexKassel\ManifestEngine\Validation\ManifestValidator;
-use Illuminate\Cache\FileStore;
+use Closure;
 use Illuminate\Container\Container;
-use Illuminate\Contracts\Cache\LockProvider;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Contracts\Support\Arrayable;
+use Illuminate\Contracts\Validation\Factory as ValidationFactory;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Cache;
 use JsonException;
+use JsonSerializable;
+use Throwable;
 
 class Manifest
 {
     public const JSON_ENCODE_FLAGS = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES;
 
     public const JSON_DECODE_DEPTH = 512;
-
-    public const NEWLINE = "\n";
 
     public const DEFAULT_LOCK_TTL_SECONDS = 30;
 
@@ -37,18 +41,6 @@ class Manifest
     public const DEFAULT_HASH_ALGO = 'sha1';
 
     public const LOCK_KEY_PREFIX = 'manifest:';
-
-    public const FALLBACK_LOCK_FOLDER = 'manifest-locks';
-
-    /**
-     * @var array<string, mixed>
-     */
-    public const DEFAULT_EMPTY_DATA = [];
-
-    /**
-     * @var array<int, mixed>
-     */
-    public const DEFAULT_APPEND_EMPTY_ARRAY = [];
 
     /**
      * In-memory cache of loaded manifest data.
@@ -62,27 +54,23 @@ class Manifest
      */
     protected bool $isDirty = false;
 
+    public int $lockTimeoutSeconds = self::DEFAULT_LOCK_TIMEOUT_SECONDS;
+
+    public int $lockTtlSeconds = self::DEFAULT_LOCK_TTL_SECONDS;
+
     protected Filesystem $files;
 
-    protected LockProvider $lockProvider;
-
-    protected ManifestValidator $validator;
-
-    protected DtoHydrator $hydrator;
+    protected ValidationFactory $validator;
 
     public function __construct(
         public readonly string $path,
         public readonly ?ManifestSchema $schema = null,
         ?Filesystem $files = null,
-        ?LockProvider $lockProvider = null,
-        ?ManifestValidator $validator = null,
-        ?DtoHydrator $hydrator = null,
+        ?ValidationFactory $validator = null,
         protected ?Dispatcher $events = null,
     ) {
         $this->files = $files ?? new Filesystem;
-        $this->lockProvider = $lockProvider ?? $this->resolveDefaultLockProvider();
-        $this->validator = $validator ?? $this->resolveDefaultValidator();
-        $this->hydrator = $hydrator ?? new DtoHydrator;
+        $this->validator = $validator ?? resolve(ValidationFactory::class);
 
         $this->dispatch(new ManifestOpened($this->path));
     }
@@ -94,50 +82,16 @@ class Manifest
         string $path,
         ?ManifestSchema $schema = null,
         ?Filesystem $files = null,
-        ?LockProvider $lockProvider = null,
-        ?ManifestValidator $validator = null,
-        ?DtoHydrator $hydrator = null,
+        ?ValidationFactory $validator = null,
         ?Dispatcher $events = null,
     ): self {
         return new self(
             path: $path,
             schema: $schema,
             files: $files,
-            lockProvider: $lockProvider,
             validator: $validator,
-            hydrator: $hydrator,
             events: $events,
         );
-    }
-
-    /**
-     * Resolve default lock provider from container or fallback to FileStore.
-     */
-    protected function resolveDefaultLockProvider(): LockProvider
-    {
-        if (class_exists(Container::class)) {
-            $container = Container::getInstance();
-            if ($container !== null && $container->bound('cache')) {
-                $store = $container->make('cache')->store()->getStore();
-                if ($store instanceof LockProvider) {
-                    return $store;
-                }
-            }
-        }
-
-        $locksDir = function_exists('storage_path')
-            ? storage_path('framework'.DIRECTORY_SEPARATOR.self::FALLBACK_LOCK_FOLDER)
-            : sys_get_temp_dir().DIRECTORY_SEPARATOR.self::FALLBACK_LOCK_FOLDER;
-
-        return new FileStore($this->files, $locksDir);
-    }
-
-    /**
-     * Resolve default validator instance.
-     */
-    protected function resolveDefaultValidator(): ManifestValidator
-    {
-        return ManifestValidator::createStandalone($this->events);
     }
 
     /**
@@ -153,7 +107,7 @@ class Manifest
     /**
      * Set explicit manifest validator.
      */
-    public function setValidator(ManifestValidator $validator): self
+    public function setValidator(ValidationFactory $validator): self
     {
         $this->validator = $validator;
 
@@ -161,23 +115,38 @@ class Manifest
     }
 
     /**
-     * Set explicit lock provider.
+     * Resolve unique lock key for this manifest file.
      */
-    public function setLockProvider(LockProvider $lockProvider): self
+    public function lockKey(): string
     {
-        $this->lockProvider = $lockProvider;
-
-        return $this;
+        return self::LOCK_KEY_PREFIX.sha1($this->canonicalPath());
     }
 
     /**
-     * Set explicit DTO hydrator.
+     * Execute an operation under atomic lock protection.
+     *
+     * @template T
+     *
+     * @param  Closure(): T  $operation
+     * @return T
+     *
+     * @throws ManifestLockTimeoutException
      */
-    public function setHydrator(DtoHydrator $hydrator): self
+    protected function withLock(Closure $operation): mixed
     {
-        $this->hydrator = $hydrator;
+        if (class_exists(Container::class)) {
+            $container = Container::getInstance();
+            if ($container !== null && $container->bound('cache')) {
+                try {
+                    return Cache::lock($this->lockKey(), $this->lockTtlSeconds)
+                        ->block($this->lockTimeoutSeconds, $operation);
+                } catch (LockTimeoutException $e) {
+                    throw new ManifestLockTimeoutException($this->path, $this->lockTimeoutSeconds, $e);
+                }
+            }
+        }
 
-        return $this;
+        return $operation();
     }
 
     /**
@@ -201,7 +170,20 @@ class Manifest
             return;
         }
 
-        $this->validator->validate($this->path, $data, $this->schema);
+        $validator = $this->validator->make(
+            $data,
+            $this->schema->rules(),
+            $this->schema->messages(),
+            $this->schema->attributes(),
+        );
+
+        if ($validator->fails()) {
+            $errors = $validator->errors()->toArray();
+
+            $this->events?->dispatch(new ManifestValidationFailed($this->path, $errors));
+
+            throw new ManifestValidationException($this->path, $errors);
+        }
     }
 
     /**
@@ -225,13 +207,26 @@ class Manifest
     }
 
     /**
+     * Load existing manifest data, or return schema defaults / empty array if not found.
+     *
+     * @return array<string, mixed>
+     */
+    protected function loadOrDefault(): array
+    {
+        try {
+            return $this->load();
+        } catch (ManifestNotFoundException) {
+            return $this->schema !== null ? $this->schema->defaults() : [];
+        }
+    }
+
+    /**
      * Initialize the manifest file with default schema state if it doesn't exist.
      */
     public function init(): self
     {
         if (! $this->exists()) {
-            $initialData = $this->schema !== null ? $this->schema->defaults() : self::DEFAULT_EMPTY_DATA;
-            $this->save($initialData);
+            $this->save($this->loadOrDefault());
         }
 
         return $this;
@@ -314,28 +309,30 @@ class Manifest
      */
     public function save(?array $data = null): self
     {
-        $payloadData = $data ?? $this->data ?? ($this->schema !== null ? $this->schema->defaults() : self::DEFAULT_EMPTY_DATA);
+        return $this->withLock(function () use ($data): self {
+            $payloadData = $data ?? $this->data ?? $this->loadOrDefault();
 
-        if ($this->schema !== null) {
-            $this->validate($payloadData);
-        }
+            if ($this->schema !== null) {
+                $this->validate($payloadData);
+            }
 
-        $this->dispatch(new ManifestSaving($this->path, $payloadData));
+            $this->dispatch(new ManifestSaving($this->path, $payloadData));
 
-        $json = json_encode($payloadData, self::JSON_ENCODE_FLAGS);
-        if ($json === false) {
-            throw new ManifestException("Failed to serialize manifest JSON for [{$this->path}].");
-        }
+            $json = json_encode($payloadData, self::JSON_ENCODE_FLAGS);
+            if ($json === false) {
+                throw new ManifestException("Failed to serialize manifest JSON for [{$this->path}].");
+            }
 
-        $this->files->ensureDirectoryExists(dirname($this->path));
-        $this->files->replace($this->path, $json.self::NEWLINE);
+            $this->files->ensureDirectoryExists(dirname($this->path));
+            $this->files->replace($this->path, $json."\n");
 
-        $this->data = $payloadData;
-        $this->isDirty = false;
+            $this->data = $payloadData;
+            $this->isDirty = false;
 
-        $this->dispatch(new ManifestSaved($this->path, $payloadData));
+            $this->dispatch(new ManifestSaved($this->path, $payloadData));
 
-        return $this;
+            return $this;
+        });
     }
 
     /**
@@ -348,12 +345,8 @@ class Manifest
      */
     public function mutate(callable $callback): array
     {
-        $canonicalPath = $this->canonicalPath();
-        $lockKey = self::LOCK_KEY_PREFIX.hash('sha256', $canonicalPath);
-        $lock = $this->lockProvider->lock($lockKey, self::DEFAULT_LOCK_TTL_SECONDS);
-
-        return $lock->block(self::DEFAULT_LOCK_TIMEOUT_SECONDS, function () use ($callback): array {
-            $currentData = self::DEFAULT_EMPTY_DATA;
+        return $this->withLock(function () use ($callback): array {
+            $currentData = [];
 
             if ($this->exists()) {
                 try {
@@ -383,7 +376,7 @@ class Manifest
             }
 
             $this->files->ensureDirectoryExists(dirname($this->path));
-            $this->files->replace($this->path, $json.self::NEWLINE);
+            $this->files->replace($this->path, $json."\n");
 
             $this->data = $mutated;
             $this->isDirty = false;
@@ -405,18 +398,34 @@ class Manifest
     }
 
     /**
-     * Hydrate manifest data into a typed DTO object.
+     * Hydrate the manifest data into a typed DTO object or custom structure.
      *
      * @template T of object
      *
-     * @param  class-string<T>  $dtoClass
+     * @param  class-string<T>|callable(array<string, mixed>): T  $target
      * @return T
      *
      * @throws ManifestException
      */
-    public function toDto(string $dtoClass): object
+    public function toDto(string|callable $target): object
     {
-        return $this->hydrator->hydrate($dtoClass, $this->all());
+        if (is_callable($target)) {
+            return $target($this->all());
+        }
+
+        if (is_subclass_of($target, ManifestDto::class) || method_exists($target, 'fromArray')) {
+            return $target::fromArray($this->all());
+        }
+
+        if (method_exists($target, 'from')) {
+            return $target::from($this->all());
+        }
+
+        try {
+            return new $target(...$this->all());
+        } catch (Throwable $e) {
+            throw new ManifestException("Failed to instantiate DTO [{$target}]: {$e->getMessage()}", 0, $e);
+        }
     }
 
     /**
@@ -426,7 +435,20 @@ class Manifest
      */
     public function saveDto(object $dto): void
     {
-        $this->save($this->hydrator->serialize($dto));
+        if ($dto instanceof Arrayable || method_exists($dto, 'toArray')) {
+            $this->save($dto->toArray());
+
+            return;
+        }
+
+        if ($dto instanceof JsonSerializable) {
+            $data = $dto->jsonSerialize();
+            $this->save(is_array($data) ? $data : (array) $data);
+
+            return;
+        }
+
+        $this->save(get_object_vars($dto));
     }
 
     /**
@@ -450,11 +472,7 @@ class Manifest
      */
     public function set(string $key, mixed $value): self
     {
-        try {
-            $data = $this->load();
-        } catch (ManifestNotFoundException) {
-            $data = $this->schema !== null ? $this->schema->defaults() : self::DEFAULT_EMPTY_DATA;
-        }
+        $data = $this->loadOrDefault();
 
         data_set($data, $key, $value);
         $this->data = $data;
@@ -468,13 +486,9 @@ class Manifest
      */
     public function append(string $key, mixed $value): self
     {
-        try {
-            $data = $this->load();
-        } catch (ManifestNotFoundException) {
-            $data = $this->schema !== null ? $this->schema->defaults() : self::DEFAULT_EMPTY_DATA;
-        }
+        $data = $this->loadOrDefault();
 
-        $current = data_get($data, $key, self::DEFAULT_APPEND_EMPTY_ARRAY);
+        $current = data_get($data, $key, []);
         if (! is_array($current)) {
             $current = [$current];
         }
@@ -492,11 +506,7 @@ class Manifest
      */
     public function forget(string $key): self
     {
-        try {
-            $data = $this->load();
-        } catch (ManifestNotFoundException) {
-            $data = $this->schema !== null ? $this->schema->defaults() : self::DEFAULT_EMPTY_DATA;
-        }
+        $data = $this->loadOrDefault();
 
         Arr::forget($data, $key);
         $this->data = $data;
@@ -530,7 +540,7 @@ class Manifest
             }
 
             $this->files->ensureDirectoryExists(dirname($outputPath));
-            $this->files->replace($outputPath, $encoded.self::NEWLINE);
+            $this->files->replace($outputPath, $encoded."\n");
         }
 
         return $jsonSchema;
@@ -541,9 +551,28 @@ class Manifest
      */
     protected function canonicalPath(): string
     {
-        $dirname = dirname($this->path);
-        $realDir = realpath($dirname) ?: $dirname;
+        $realPath = realpath($this->path);
+        if ($realPath !== false) {
+            return $realPath;
+        }
 
-        return rtrim($realDir, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.basename($this->path);
+        $dirname = dirname($this->path);
+        $realDir = realpath($dirname);
+        if ($realDir !== false) {
+            return rtrim($realDir, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.basename($this->path);
+        }
+
+        $base = function_exists('base_path') ? base_path() : (string) (getcwd() ?: '.');
+        if (! str_starts_with($this->path, DIRECTORY_SEPARATOR)) {
+            $combined = rtrim($base, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.$this->path;
+            $realCombinedDir = realpath(dirname($combined));
+            if ($realCombinedDir !== false) {
+                return rtrim($realCombinedDir, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.basename($combined);
+            }
+
+            return $combined;
+        }
+
+        return $this->path;
     }
 }

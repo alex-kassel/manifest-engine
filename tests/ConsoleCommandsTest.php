@@ -90,6 +90,17 @@ class ConsoleCommandsTest extends TestCase
             {
                 return ['app_name' => 'required|string|min:2'];
             }
+
+            public function jsonSchema(): ?array
+            {
+                return [
+                    '$schema' => 'http://json-schema.org/draft-07/schema#',
+                    'type' => 'object',
+                    'properties' => [
+                        'app_name' => ['type' => 'string'],
+                    ],
+                ];
+            }
         };
 
         $registry->register('app', 'app.json', $schema, description: 'App Schema');
@@ -138,6 +149,16 @@ class ConsoleCommandsTest extends TestCase
         if ($this->files->exists($manifest->path)) {
             $this->files->delete($manifest->path);
         }
+    }
+
+    public function test_manifest_make_command_supports_absolute_custom_path(): void
+    {
+        $absolutePath = "{$this->tempDir}/absolute_custom.json";
+
+        $this->artisan("manifest:make {$absolutePath}")
+            ->assertSuccessful();
+
+        $this->assertTrue($this->files->exists($absolutePath));
     }
 
     public function test_manifest_schema_command_handles_missing_argument_fail_safely(): void
@@ -254,6 +275,33 @@ class ConsoleCommandsTest extends TestCase
         $manager->registry()->register('app_status', 'app_status.json', $schema, description: 'Test desc');
 
         $this->artisan('manifest:status')
+            ->assertSuccessful();
+    }
+
+    public function test_manifest_status_command_supports_base_path_option(): void
+    {
+        /** @var ManifestManager $manager */
+        $manager = app(ManifestManager::class);
+        $manager->registry()->clear();
+
+        $schema = new class extends BaseSchema
+        {
+            public function defaults(): array
+            {
+                return ['status' => 'ok'];
+            }
+
+            public function rules(): array
+            {
+                return [];
+            }
+        };
+
+        $manager->registry()->register('custom_status', 'custom.json', $schema);
+
+        $this->files->put("{$this->tempDir}/custom.json", json_encode(['status' => 'ok']));
+
+        $this->artisan("manifest:status --base-path={$this->tempDir}")
             ->assertSuccessful();
     }
 }

@@ -11,12 +11,14 @@ use AlexKassel\ManifestEngine\Events\ManifestSaved;
 use AlexKassel\ManifestEngine\Events\ManifestSaving;
 use AlexKassel\ManifestEngine\Events\ManifestValidationFailed;
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
+use AlexKassel\ManifestEngine\Exceptions\ManifestLockTimeoutException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestNotFoundException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestValidationException;
 use AlexKassel\ManifestEngine\Manifest;
 use AlexKassel\ManifestEngine\Schemas\BaseSchema;
 use Illuminate\Events\Dispatcher;
 use Illuminate\Filesystem\Filesystem;
+use Illuminate\Support\Facades\Cache;
 
 class TestManifestDto implements ManifestDto
 {
@@ -174,20 +176,42 @@ class ManifestTest extends TestCase
         $this->assertTrue($manifest->has('b'));
     }
 
-    public function test_it_mutates_atomically(): void
+    public function test_it_throws_manifest_lock_timeout_exception_when_save_is_blocked(): void
     {
         $path = "{$this->tempDir}/manifest.json";
-        $this->files->put($path, json_encode(['counter' => 1]));
-
         $manifest = Manifest::open($path, files: $this->files);
-        $result = $manifest->mutate(function (array $data): array {
-            $data['counter']++;
+        $manifest->lockTimeoutSeconds = 1;
 
-            return $data;
-        });
+        $externalLock = Cache::lock($manifest->lockKey(), 10);
+        $this->assertTrue($externalLock->acquire());
 
-        $this->assertSame(2, $result['counter']);
-        $this->assertSame(2, $manifest->get('counter'));
+        try {
+            $this->expectException(ManifestLockTimeoutException::class);
+            $manifest->save(['status' => 'blocked']);
+        } finally {
+            $externalLock->release();
+        }
+    }
+
+    public function test_it_throws_manifest_lock_timeout_exception_when_mutate_is_blocked(): void
+    {
+        $path = "{$this->tempDir}/manifest.json";
+        $manifest = Manifest::open($path, files: $this->files);
+        $manifest->lockTimeoutSeconds = 1;
+
+        $externalLock = Cache::lock($manifest->lockKey(), 10);
+        $this->assertTrue($externalLock->acquire());
+
+        try {
+            $this->expectException(ManifestLockTimeoutException::class);
+            $manifest->mutate(function (array $data): array {
+                $data['counter'] = 999;
+
+                return $data;
+            });
+        } finally {
+            $externalLock->release();
+        }
     }
 
     public function test_it_validates_schema_and_throws_exception_on_invalid_data(): void
@@ -214,42 +238,46 @@ class ManifestTest extends TestCase
         $manifest->save(['status' => 'invalid_value']);
     }
 
-    public function test_it_auto_compiles_json_schema_from_rules(): void
+    public function test_it_exports_json_schema_definition(): void
     {
         $schema = new class extends BaseSchema
         {
             public function defaults(): array
             {
-                return ['name' => 'Demo', 'version' => 1, 'tags' => ['prod']];
+                return ['name' => 'Demo', 'version' => 1];
             }
 
             public function rules(): array
             {
                 return [
-                    'name' => 'required|string|min:3|max:50',
-                    'version' => 'required|integer|min:1',
-                    'tags' => 'present|array',
-                    'tags.*' => 'string',
-                    'status' => 'in:draft,published',
+                    'name' => ['required', 'string'],
+                    'version' => ['required', 'integer'],
+                ];
+            }
+
+            public function jsonSchema(): ?array
+            {
+                return [
+                    '$schema' => 'http://json-schema.org/draft-07/schema#',
+                    'type' => 'object',
+                    'required' => ['name', 'version'],
+                    'properties' => [
+                        'name' => ['type' => 'string', 'minLength' => 3],
+                        'version' => ['type' => 'integer', 'minimum' => 1],
+                    ],
                 ];
             }
         };
 
-        $jsonSchema = $schema->jsonSchema();
+        $manifest = Manifest::open("{$this->tempDir}/manifest.json", $schema, files: $this->files);
+        $outputPath = "{$this->tempDir}/manifest.schema.json";
+        $exported = $manifest->exportJsonSchema($outputPath);
 
-        $this->assertIsArray($jsonSchema);
-        $this->assertSame('http://json-schema.org/draft-07/schema#', $jsonSchema['$schema']);
-        $this->assertSame('object', $jsonSchema['type']);
-        $this->assertContains('name', $jsonSchema['required']);
-        $this->assertContains('version', $jsonSchema['required']);
-        $this->assertSame('string', $jsonSchema['properties']['name']['type']);
-        $this->assertSame(3, $jsonSchema['properties']['name']['minLength']);
-        $this->assertSame(50, $jsonSchema['properties']['name']['maxLength']);
-        $this->assertSame('integer', $jsonSchema['properties']['version']['type']);
-        $this->assertSame(1, $jsonSchema['properties']['version']['minimum']);
-        $this->assertSame('array', $jsonSchema['properties']['tags']['type']);
-        $this->assertSame('string', $jsonSchema['properties']['tags']['items']['type']);
-        $this->assertSame(['draft', 'published'], $jsonSchema['properties']['status']['enum']);
+        $this->assertIsArray($exported);
+        $this->assertTrue($this->files->exists($outputPath));
+        $content = json_decode((string) $this->files->get($outputPath), true);
+        $this->assertSame('http://json-schema.org/draft-07/schema#', $content['$schema']);
+        $this->assertSame('string', $content['properties']['name']['type']);
     }
 
     public function test_it_hydrates_and_saves_dto_contract(): void
@@ -283,6 +311,17 @@ class ManifestTest extends TestCase
         $this->assertInstanceOf(SimpleUserDto::class, $dto);
         $this->assertSame('alex', $dto->username);
         $this->assertTrue($dto->active);
+    }
+
+    public function test_it_transforms_data_via_callable(): void
+    {
+        $path = "{$this->tempDir}/manifest.json";
+        $this->files->put($path, json_encode(['title' => 'My App']));
+
+        $manifest = Manifest::open($path, files: $this->files);
+        $dto = $manifest->toDto(fn (array $data) => (object) ['upper' => strtoupper($data['title'])]);
+
+        $this->assertSame('MY APP', $dto->upper);
     }
 
     public function test_it_dispatches_lifecycle_events(): void

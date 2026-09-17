@@ -10,25 +10,6 @@ use Illuminate\Console\Command;
 
 class ManifestValidateCommand extends Command
 {
-    public const DEFAULT_PLACEHOLDER = '—';
-
-    public const STATUS_VALID_LABEL = '<info>✔ Valid</info>';
-
-    public const STATUS_INVALID_LABEL = '<error>✘ Invalid</error>';
-
-    public const STATUS_MISSING_LABEL = '<comment>Missing File</comment>';
-
-    /**
-     * @var array<int, string>
-     */
-    public const TABLE_HEADERS = ['Manifest', 'File', 'Status', 'Errors'];
-
-    public const EMPTY_REGISTRY_MESSAGE = 'No manifest definitions are registered in this application.';
-
-    public const SUCCESS_ALL_VALID_MESSAGE = 'All registered manifests are valid.';
-
-    public const ERRORS_FOUND_MESSAGE = 'One or more manifests failed validation.';
-
     /**
      * The name and signature of the console command.
      *
@@ -72,7 +53,7 @@ class ManifestValidateCommand extends Command
         }
 
         if (empty($reports)) {
-            $this->comment(self::EMPTY_REGISTRY_MESSAGE);
+            $this->comment('No manifest definitions are registered in this application.');
 
             return self::SUCCESS;
         }
@@ -82,25 +63,25 @@ class ManifestValidateCommand extends Command
 
         foreach ($reports as $report) {
             if (! $report->exists) {
-                $rows[] = [$report->name, $report->filename, self::STATUS_MISSING_LABEL, self::DEFAULT_PLACEHOLDER];
+                $rows[] = [$report->name, $report->filename, '<comment>Missing File</comment>', '—'];
                 $hasFailures = true;
             } elseif (! $report->isValid) {
-                $rows[] = [$report->name, $report->filename, self::STATUS_INVALID_LABEL, $report->formattedErrors()];
+                $rows[] = [$report->name, $report->filename, '<error>✘ Invalid</error>', $report->formattedErrors()];
                 $hasFailures = true;
             } else {
-                $rows[] = [$report->name, $report->filename, self::STATUS_VALID_LABEL, self::DEFAULT_PLACEHOLDER];
+                $rows[] = [$report->name, $report->filename, '<info>✔ Valid</info>', '—'];
             }
         }
 
-        $this->table(self::TABLE_HEADERS, $rows);
+        $this->table(['Manifest', 'File', 'Status', 'Errors'], $rows);
 
         if ($hasFailures) {
-            $this->error(self::ERRORS_FOUND_MESSAGE);
+            $this->error('One or more manifests failed validation.');
 
             return self::FAILURE;
         }
 
-        $this->info(self::SUCCESS_ALL_VALID_MESSAGE);
+        $this->info('All registered manifests are valid.');
 
         return self::SUCCESS;
     }

@@ -9,25 +9,13 @@ use Illuminate\Console\Command;
 
 class ManifestStatusCommand extends Command
 {
-    public const DEFAULT_PLACEHOLDER = '—';
-
-    public const STATUS_EXISTS_LABEL = '<info>✔ Exists</info>';
-
-    public const STATUS_MISSING_LABEL = '<comment>Missing</comment>';
-
-    /**
-     * @var array<int, string>
-     */
-    public const TABLE_HEADERS = ['Manifest', 'File', 'Status', 'Size', 'Last Modified', 'Description'];
-
-    public const EMPTY_REGISTRY_MESSAGE = 'No manifest definitions are registered in this application.';
-
     /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'manifest:status';
+    protected $signature = 'manifest:status
+                            {--base-path= : Optional custom root directory}';
 
     /**
      * The console command description.
@@ -47,10 +35,13 @@ class ManifestStatusCommand extends Command
      */
     public function handle(): int
     {
-        $reports = $this->inspector->getStatusReports();
+        $basePathOption = $this->option('base-path');
+        $basePath = is_string($basePathOption) && trim($basePathOption) !== '' ? trim($basePathOption) : null;
+
+        $reports = $this->inspector->getStatusReports($basePath);
 
         if (empty($reports)) {
-            $this->comment(self::EMPTY_REGISTRY_MESSAGE);
+            $this->comment('No manifest definitions are registered in this application.');
 
             return self::SUCCESS;
         }
@@ -60,14 +51,14 @@ class ManifestStatusCommand extends Command
             $rows[] = [
                 $report->name,
                 $report->filename,
-                $report->exists ? self::STATUS_EXISTS_LABEL : self::STATUS_MISSING_LABEL,
-                $report->humanSize ?? self::DEFAULT_PLACEHOLDER,
-                $report->lastModified ?? self::DEFAULT_PLACEHOLDER,
-                $report->description ?? self::DEFAULT_PLACEHOLDER,
+                $report->exists ? '<info>✔ Exists</info>' : '<comment>Missing</comment>',
+                $report->humanSize ?? '—',
+                $report->lastModified ?? '—',
+                $report->description ?? '—',
             ];
         }
 
-        $this->table(self::TABLE_HEADERS, $rows);
+        $this->table(['Manifest', 'File', 'Status', 'Size', 'Last Modified', 'Description'], $rows);
 
         return self::SUCCESS;
     }

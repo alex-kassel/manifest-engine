@@ -6,14 +6,6 @@ namespace AlexKassel\ManifestEngine\DTOs;
 
 class ManifestValidationReport
 {
-    public const DEFAULT_EMPTY_ERROR_MESSAGE = '';
-
-    public const GLUE_NEWLINE = "\n";
-
-    public const GLUE_ERROR_LIST = ', ';
-
-    public const GLUE_FIELD_PREFIX = ': ';
-
     /**
      * @param  array<string, array<int, string>>  $errors
      */
@@ -35,12 +27,12 @@ class ManifestValidationReport
         if (! empty($this->errors)) {
             $lines = [];
             foreach ($this->errors as $field => $messages) {
-                $lines[] = $field.self::GLUE_FIELD_PREFIX.implode(self::GLUE_ERROR_LIST, $messages);
+                $lines[] = "{$field}: ".implode(', ', $messages);
             }
 
-            return implode(self::GLUE_NEWLINE, $lines);
+            return implode("\n", $lines);
         }
 
-        return $this->errorMessage ?? self::DEFAULT_EMPTY_ERROR_MESSAGE;
+        return $this->errorMessage ?? '';
     }
 }
