@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AlexKassel\ManifestEngine\Tests;
 
 use AlexKassel\ManifestEngine\DTOs\ManifestDefinition;
+use AlexKassel\ManifestEngine\Manifest;
 use AlexKassel\ManifestEngine\ManifestManager;
 use AlexKassel\ManifestEngine\Schemas\BaseSchema;
 use AlexKassel\ManifestEngine\Services\ManifestInspectionService;
@@ -60,7 +61,7 @@ class ManifestInspectionServiceTest extends TestCase
         $this->assertNull($reports['sample']->humanSize);
 
         // After file creation
-        $manifest = $this->manager->open("{$this->tempDir}/sample.json", $schema);
+        $manifest = new Manifest("{$this->tempDir}/sample.json", $schema);
         $manifest->init();
 
         $refreshed = $this->service->getStatusReports($this->tempDir);
@@ -87,7 +88,7 @@ class ManifestInspectionServiceTest extends TestCase
         $this->assertFalse($reports['metrics']->isValid);
 
         // File is initialized and valid
-        $manifest = $this->manager->open("{$this->tempDir}/metrics.json", $schema);
+        $manifest = new Manifest("{$this->tempDir}/metrics.json", $schema);
         $manifest->init();
 
         $validReports = $this->service->validateAll('metrics', $this->tempDir);

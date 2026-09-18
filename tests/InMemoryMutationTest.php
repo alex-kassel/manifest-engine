@@ -32,7 +32,7 @@ class InMemoryMutationTest extends TestCase
     public function test_it_mutates_in_memory_and_tracks_dirty_flag(): void
     {
         $path = "{$this->tempDir}/manifest.json";
-        $manifest = Manifest::open($path, files: $this->files);
+        $manifest = new Manifest($path, files: $this->files);
 
         $this->assertFalse($manifest->isDirty());
 
@@ -57,7 +57,7 @@ class InMemoryMutationTest extends TestCase
         $this->assertTrue($this->files->exists($path));
 
         // Another instance reads persisted data
-        $reloaded = Manifest::open($path, files: $this->files);
+        $reloaded = new Manifest($path, files: $this->files);
         $this->assertSame('Acme', $reloaded->get('app.name'));
         $this->assertSame(['billing', 'auth'], $reloaded->get('app.features'));
     }
@@ -67,7 +67,7 @@ class InMemoryMutationTest extends TestCase
         $path = "{$this->tempDir}/manifest.json";
         $this->files->put($path, json_encode(['a' => 1, 'b' => 2]));
 
-        $manifest = Manifest::open($path, files: $this->files);
+        $manifest = new Manifest($path, files: $this->files);
         $this->assertFalse($manifest->isDirty());
 
         $manifest->forget('a');
@@ -91,7 +91,7 @@ class InMemoryMutationTest extends TestCase
         $path = "{$this->tempDir}/manifest.json";
         $this->files->put($path, json_encode(['counter' => 1]));
 
-        $manifest = Manifest::open($path, files: $this->files);
+        $manifest = new Manifest($path, files: $this->files);
         $this->assertSame(1, $manifest->get('counter'));
 
         // Simulate external edit

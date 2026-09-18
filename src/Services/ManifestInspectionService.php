@@ -7,6 +7,7 @@ namespace AlexKassel\ManifestEngine\Services;
 use AlexKassel\ManifestEngine\DTOs\ManifestStatusReport;
 use AlexKassel\ManifestEngine\DTOs\ManifestValidationReport;
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
+use AlexKassel\ManifestEngine\Manifest;
 use AlexKassel\ManifestEngine\ManifestManager;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Number;
@@ -79,7 +80,7 @@ class ManifestInspectionService
 
         foreach ($manifests as $name => $def) {
             try {
-                $manifest = $this->manager->open($def->fullPath($basePath), $def->resolveSchema());
+                $manifest = new Manifest($def->fullPath($basePath), $def->resolveSchema());
 
                 if (! $manifest->exists()) {
                     $reports[$name] = new ManifestValidationReport(

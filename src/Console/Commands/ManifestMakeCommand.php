@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AlexKassel\ManifestEngine\Console\Commands;
 
+use AlexKassel\ManifestEngine\Manifest;
 use AlexKassel\ManifestEngine\ManifestManager;
 use Illuminate\Console\Command;
 
@@ -86,11 +87,9 @@ class ManifestMakeCommand extends Command
             return self::FAILURE;
         }
 
-        $targetPath = $registry->has($target)
-            ? $target
-            : (str_ends_with($target, '.json') ? $target : $target.'.json');
-
-        $manifest = $this->manager->open($targetPath);
+        $manifest = $registry->has($target)
+            ? $this->manager->open($target)
+            : new Manifest(str_ends_with($target, '.json') ? $target : $target.'.json');
 
         if ($manifest->exists()) {
             if (! $this->option('force')) {

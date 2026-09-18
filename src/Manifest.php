@@ -29,16 +29,6 @@ class Manifest implements Arrayable, ArrayAccess, Jsonable, JsonSerializable
 {
     public const JSON_ENCODE_FLAGS = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE;
 
-    public const JSON_DECODE_DEPTH = 512;
-
-    public const DEFAULT_LOCK_TTL_SECONDS = 30;
-
-    public const DEFAULT_LOCK_TIMEOUT_SECONDS = 10;
-
-    public const DEFAULT_HASH_ALGO = 'sha1';
-
-    public const LOCK_KEY_PREFIX = 'manifest:';
-
     /**
      * In-memory cache of loaded manifest data.
      *
@@ -51,36 +41,34 @@ class Manifest implements Arrayable, ArrayAccess, Jsonable, JsonSerializable
      */
     protected bool $isDirty = false;
 
-    public int $lockTimeoutSeconds = self::DEFAULT_LOCK_TIMEOUT_SECONDS;
+    public int $lockTimeoutSeconds = 10;
 
-    public int $lockTtlSeconds = self::DEFAULT_LOCK_TTL_SECONDS;
+    public int $lockTtlSeconds = 30;
 
     public readonly string $path;
 
-    protected Filesystem $files;
+    public readonly ?ManifestSchema $schema;
 
     public function __construct(
         string $path,
-        public readonly ?ManifestSchema $schema = null,
-        ?Filesystem $files = null,
+        ?ManifestSchema $schema = null,
+        protected ?Filesystem $files = null,
     ) {
         $this->path = self::resolvePath($path);
-        $this->files = $files ?? new Filesystem;
+        $this->files ??= app(Filesystem::class);
+        $this->schema = $schema ?? $this->resolveSchema();
     }
 
     /**
-     * Open a manifest document handler.
+     * Resolve the schema for this manifest from the application registry.
      */
-    public static function open(
-        string $path,
-        ?ManifestSchema $schema = null,
-        ?Filesystem $files = null,
-    ): self {
-        return new self(
-            path: $path,
-            schema: $schema,
-            files: $files,
-        );
+    protected function resolveSchema(): ?ManifestSchema
+    {
+        if (function_exists('app') && app()->bound(ManifestRegistry::class)) {
+            return app(ManifestRegistry::class)->findByPath($this->path)?->resolveSchema();
+        }
+
+        return null;
     }
 
     /**
@@ -88,7 +76,7 @@ class Manifest implements Arrayable, ArrayAccess, Jsonable, JsonSerializable
      */
     public function lockKey(): string
     {
-        return self::LOCK_KEY_PREFIX.sha1($this->canonicalPath());
+        return 'manifest:'.sha1($this->canonicalPath());
     }
 
     /**
@@ -129,7 +117,7 @@ class Manifest implements Arrayable, ArrayAccess, Jsonable, JsonSerializable
     /**
      * Calculate hash of the manifest file on disk.
      */
-    public function hash(string $algorithm = self::DEFAULT_HASH_ALGO): ?string
+    public function hash(string $algorithm = 'sha1'): ?string
     {
         if (! $this->exists()) {
             return null;

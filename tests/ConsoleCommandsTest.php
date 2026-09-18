@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AlexKassel\ManifestEngine\Tests;
 
 use AlexKassel\ManifestEngine\DTOs\ManifestDefinition;
+use AlexKassel\ManifestEngine\Manifest;
 use AlexKassel\ManifestEngine\ManifestManager;
 use AlexKassel\ManifestEngine\ManifestRegistry;
 use AlexKassel\ManifestEngine\Schemas\BaseSchema;
@@ -55,7 +56,7 @@ class ConsoleCommandsTest extends TestCase
             ->assertFailed();
 
         // Initialize file with valid defaults
-        $manifest = $manager->open("{$this->tempDir}/service.json", $schema);
+        $manifest = new Manifest("{$this->tempDir}/service.json", $schema);
         $manifest->init();
 
         $this->artisan("manifest:validate service --base-path={$this->tempDir}")

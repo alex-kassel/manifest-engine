@@ -32,11 +32,27 @@ class ManifestRegistry
     }
 
     /**
-     * Get a registered manifest definition.
+     * Get a registered manifest definition by its alias name.
      */
     public function get(string $name): ?ManifestDefinition
     {
         return $this->manifests[$name] ?? null;
+    }
+
+    /**
+     * Find a registered manifest definition by its file path.
+     */
+    public function findByPath(string $path): ?ManifestDefinition
+    {
+        $resolved = Manifest::resolvePath($path);
+
+        foreach ($this->manifests as $definition) {
+            if ($definition->fullPath() === $resolved) {
+                return $definition;
+            }
+        }
+
+        return null;
     }
 
     /**
