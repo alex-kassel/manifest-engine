@@ -339,12 +339,11 @@ class ManifestTest extends TestCase
 
         $definition = new ManifestDefinition(
             name: 'workspace',
-            filename: base_path('nested/workspace.json'),
+            path: base_path('nested/workspace.json'),
             schema: $schema,
         );
 
-        $this->assertSame('nested/workspace.json', $definition->filename);
-        $this->assertSame(base_path('nested/workspace.json'), $definition->fullPath());
+        $this->assertSame(base_path('nested/workspace.json'), $definition->path);
     }
 
     public function test_it_implements_array_access(): void
@@ -438,8 +437,8 @@ class ManifestTest extends TestCase
 
         // Fluent registration chaining
         $chainResult = $manager
-            ->register(new ManifestDefinition('app', 'app.json', $schema))
-            ->register(new ManifestDefinition('db', 'db.json', $schema));
+            ->register(new ManifestDefinition('app', base_path('app.json'), $schema))
+            ->register(new ManifestDefinition('db', base_path('db.json'), $schema));
 
         $this->assertSame($manager, $chainResult);
         $this->assertTrue($registry->has('app'));

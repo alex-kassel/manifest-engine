@@ -22,8 +22,8 @@ class ManifestRegistryTest extends TestCase
             }
         };
 
-        $def1 = new ManifestDefinition('app', 'app.json', $schema, 'App manifest');
-        $def2 = new ManifestDefinition('db', 'db.json', $schema);
+        $def1 = new ManifestDefinition('app', base_path('app.json'), $schema, 'App manifest');
+        $def2 = new ManifestDefinition('db', base_path('db.json'), $schema);
 
         $this->assertFalse($registry->has('app'));
         $this->assertNull($registry->get('app'));

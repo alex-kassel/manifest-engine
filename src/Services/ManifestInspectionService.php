@@ -33,7 +33,9 @@ class ManifestInspectionService
         $reports = [];
 
         foreach ($manifests as $name => $def) {
-            $manifestPath = $def->fullPath($rootPath);
+            $manifestPath = $basePath !== null
+                ? rtrim($basePath, '/\\').DIRECTORY_SEPARATOR.basename($def->path)
+                : $def->path;
             $hasManifest = $this->files->exists($manifestPath);
 
             $size = $hasManifest ? (int) $this->files->size($manifestPath) : null;
@@ -42,7 +44,7 @@ class ManifestInspectionService
 
             $reports[$name] = new ManifestStatusReport(
                 name: $name,
-                filename: $def->filename,
+                filename: basename($def->path),
                 path: $manifestPath,
                 exists: $hasManifest,
                 sizeBytes: $size,
@@ -56,7 +58,7 @@ class ManifestInspectionService
     }
 
     /**
-     * Validate all or a specific registered manifest against its schema.
+     * Validate one or all registered manifests against their schemas.
      *
      * @return array<string, ManifestValidationReport>
      *
@@ -80,12 +82,16 @@ class ManifestInspectionService
 
         foreach ($manifests as $name => $def) {
             try {
-                $manifest = new Manifest($def->fullPath($basePath), $def->resolveSchema());
+                $targetPath = $basePath !== null
+                    ? rtrim($basePath, '/\\').DIRECTORY_SEPARATOR.basename($def->path)
+                    : $def->path;
+
+                $manifest = new Manifest($targetPath, $def->schema);
 
                 if (! $manifest->exists()) {
                     $reports[$name] = new ManifestValidationReport(
                         name: $name,
-                        filename: $def->filename,
+                        filename: basename($def->path),
                         path: $manifest->path,
                         exists: false,
                         isValid: false,
@@ -99,7 +105,7 @@ class ManifestInspectionService
 
                 $reports[$name] = new ManifestValidationReport(
                     name: $name,
-                    filename: $def->filename,
+                    filename: basename($def->path),
                     path: $manifest->path,
                     exists: true,
                     isValid: true,
@@ -107,7 +113,7 @@ class ManifestInspectionService
             } catch (ManifestException $e) {
                 $reports[$name] = new ManifestValidationReport(
                     name: $name,
-                    filename: $def->filename,
+                    filename: basename($def->path),
                     path: $manifest->path,
                     exists: $manifest->exists(),
                     isValid: false,

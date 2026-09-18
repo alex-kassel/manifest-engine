@@ -93,7 +93,7 @@ class ManifestSchemaCommand extends Command
             return self::FAILURE;
         }
 
-        $schemaInstance = $def->resolveSchema();
+        $schemaInstance = $def->schema;
         if ($schemaInstance === null) {
             $this->warn('The selected manifest does not define a schema.');
 

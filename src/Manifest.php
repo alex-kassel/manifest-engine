@@ -65,7 +65,7 @@ class Manifest implements Arrayable, ArrayAccess, Jsonable, JsonSerializable
     protected function resolveSchema(): ?ManifestSchema
     {
         if (function_exists('app') && app()->bound(ManifestRegistry::class)) {
-            return app(ManifestRegistry::class)->findByPath($this->path)?->resolveSchema();
+            return app(ManifestRegistry::class)->findByPath($this->path)?->schema;
         }
 
         return null;

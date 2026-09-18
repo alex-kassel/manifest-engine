@@ -37,7 +37,7 @@ final readonly class ManifestManager
         }
 
         return new Manifest(
-            path: $definition->fullPath(),
+            path: $definition->path,
         );
     }
 }

@@ -44,10 +44,8 @@ class ManifestRegistry
      */
     public function findByPath(string $path): ?ManifestDefinition
     {
-        $resolved = Manifest::resolvePath($path);
-
         foreach ($this->manifests as $definition) {
-            if ($definition->fullPath() === $resolved) {
+            if ($definition->path === $path) {
                 return $definition;
             }
         }

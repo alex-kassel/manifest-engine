@@ -126,3 +126,25 @@ php artisan manifest:watch {name}
 
 * **Live Event Streaming:** Dispatches `ManifestExternallyChanged` events providing granular, field-level diffs (`added`, `updated`, `removed`).
 * **Real-Time WebSocket Broadcasting:** Seamlessly broadcasts updates to browser dashboards or frontends via **Laravel Reverb** or Server-Sent Events (SSE), turning static JSON documents into reactive real-time state buses.
+
+---
+
+## 6. Schema Inference & Reverse-Engineering (`ManifestSchemaInferrer`)
+
+### Problem
+When integrating with existing or third-party JSON files (e.g. `boost.json`, `composer.json`, `package.json`, custom external manifests), developers currently have to manually write out all schema validation rules, default fallback values, and JSON Schema draft definitions from scratch.
+
+### Planned Solution
+Implement a schema deduction and generation engine that analyzes any arbitrary live JSON document on disk and reverse-engineers a complete, strongly-typed `ManifestSchema` class:
+
+```bash
+php artisan manifest:generate-schema boost.json --class=BoostSchema
+```
+
+* **Recursive Type Extraction:** Analyzes structural keys, scalar types (`string`, `integer`, `boolean`), lists vs associative dictionaries, and nested objects.
+* **Auto-Generated PHP Schema Class:**
+  - `defaults()`: Generates a clean default skeleton based on the analyzed document.
+  - `rules()`: Generates strict Laravel validation rules matching observed types and nullability constraints.
+  - `jsonSchema()`: Generates full JSON Schema draft specification for IDE autocompletion and hover documentation in PhpStorm / VS Code.
+* **Instant Type Safety for Third-Party Files:** Allows any "wild" unmanaged JSON document in the workspace to be instantly wrapped with schema validation and IDE autocomplete in seconds.
+

@@ -52,7 +52,7 @@ class ManifestInspectionServiceTest extends TestCase
             }
         };
 
-        $this->manager->registry->register(new ManifestDefinition('sample', 'sample.json', $schema, 'Sample Manifest'));
+        $this->manager->registry->register(new ManifestDefinition('sample', "{$this->tempDir}/sample.json", $schema, 'Sample Manifest'));
 
         // Before file creation
         $reports = $this->service->getStatusReports($this->tempDir);
@@ -80,7 +80,7 @@ class ManifestInspectionServiceTest extends TestCase
             }
         };
 
-        $this->manager->registry->register(new ManifestDefinition('metrics', 'metrics.json', $schema));
+        $this->manager->registry->register(new ManifestDefinition('metrics', "{$this->tempDir}/metrics.json", $schema));
 
         // File is missing
         $reports = $this->service->validateAll('metrics', $this->tempDir);
