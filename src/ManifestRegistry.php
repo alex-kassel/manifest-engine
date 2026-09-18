@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace AlexKassel\ManifestEngine;
 
-use AlexKassel\ManifestEngine\Contracts\ManifestSchema;
 use AlexKassel\ManifestEngine\DTOs\ManifestDefinition;
 
 class ManifestRegistry
@@ -16,24 +15,10 @@ class ManifestRegistry
 
     /**
      * Register a new manifest definition.
-     *
-     * @param  class-string<ManifestSchema>|ManifestSchema  $schema
-     * @param  array<string, mixed>  $metadata
      */
-    public function register(
-        string $name,
-        string $filename,
-        string|ManifestSchema $schema,
-        ?string $description = null,
-        array $metadata = [],
-    ): self {
-        $this->manifests[$name] = new ManifestDefinition(
-            name: $name,
-            filename: $filename,
-            schema: $schema,
-            description: $description,
-            metadata: $metadata,
-        );
+    public function register(ManifestDefinition $definition): self
+    {
+        $this->manifests[$definition->name] = $definition;
 
         return $this;
     }
@@ -62,6 +47,26 @@ class ManifestRegistry
     public function all(): array
     {
         return $this->manifests;
+    }
+
+    /**
+     * Get all registered manifest alias names.
+     *
+     * @return list<string>
+     */
+    public function names(): array
+    {
+        return array_keys($this->manifests);
+    }
+
+    /**
+     * Forget a registered manifest definition by name.
+     */
+    public function forget(string $name): self
+    {
+        unset($this->manifests[$name]);
+
+        return $this;
     }
 
     /**

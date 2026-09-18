@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AlexKassel\ManifestEngine\Tests;
 
+use AlexKassel\ManifestEngine\DTOs\ManifestDefinition;
 use AlexKassel\ManifestEngine\ManifestManager;
 use AlexKassel\ManifestEngine\ManifestRegistry;
 use AlexKassel\ManifestEngine\Schemas\BaseSchema;
@@ -47,7 +48,7 @@ class ConsoleCommandsTest extends TestCase
             }
         };
 
-        $registry->register('service', 'service.json', $schema, description: 'Service manifest');
+        $registry->register(new ManifestDefinition('service', 'service.json', $schema, description: 'Service manifest'));
 
         // Missing file initially -> should fail validation
         $this->artisan("manifest:validate service --base-path={$this->tempDir}")
@@ -93,7 +94,7 @@ class ConsoleCommandsTest extends TestCase
             }
         };
 
-        $registry->register('app', 'app.json', $schema, description: 'App Schema');
+        $registry->register(new ManifestDefinition('app', 'app.json', $schema, description: 'App Schema'));
 
         $outputPath = "{$this->tempDir}/app.schema.json";
 
@@ -121,7 +122,7 @@ class ConsoleCommandsTest extends TestCase
             }
         };
 
-        $registry->register('scaffold', 'scaffold.json', $schema, description: 'Scaffold demo');
+        $registry->register(new ManifestDefinition('scaffold', 'scaffold.json', $schema, description: 'Scaffold demo'));
 
         $this->artisan('manifest:make scaffold')
             ->assertSuccessful();
@@ -157,13 +158,13 @@ class ConsoleCommandsTest extends TestCase
             ->assertSuccessful();
 
         // Registered manifests scenario with missing argument
-        $manager->registry()->register('test_alias', 'test.json', new class extends BaseSchema
+        $manager->registry()->register(new ManifestDefinition('test_alias', 'test.json', new class extends BaseSchema
         {
             public function defaults(): array
             {
                 return [];
             }
-        });
+        }));
 
         $this->artisan('manifest:schema', ['--no-interaction' => true])
             ->expectsOutputToContain('Please specify a manifest name.')
@@ -203,7 +204,7 @@ class ConsoleCommandsTest extends TestCase
             }
         };
 
-        $manager->registry()->register('force_test', 'force_test.json', $schema);
+        $manager->registry()->register(new ManifestDefinition('force_test', 'force_test.json', $schema));
         $manifest = $manager->get('force_test');
 
         // Create initial
@@ -242,7 +243,7 @@ class ConsoleCommandsTest extends TestCase
             }
         };
 
-        $manager->registry()->register('app_status', 'app_status.json', $schema, description: 'Test desc');
+        $manager->registry()->register(new ManifestDefinition('app_status', 'app_status.json', $schema, description: 'Test desc'));
 
         $this->artisan('manifest:status')
             ->assertSuccessful();
@@ -262,7 +263,7 @@ class ConsoleCommandsTest extends TestCase
             }
         };
 
-        $manager->registry()->register('custom_status', 'custom.json', $schema);
+        $manager->registry()->register(new ManifestDefinition('custom_status', 'custom.json', $schema));
 
         $this->files->put("{$this->tempDir}/custom.json", json_encode(['status' => 'ok']));
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AlexKassel\ManifestEngine;
 
 use AlexKassel\ManifestEngine\Contracts\ManifestSchema;
+use AlexKassel\ManifestEngine\DTOs\ManifestDefinition;
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
 use Illuminate\Filesystem\Filesystem;
 
@@ -59,24 +60,10 @@ class ManifestManager
 
     /**
      * Register a manifest definition in the application registry.
-     *
-     * @param  class-string<ManifestSchema>|ManifestSchema  $schema
-     * @param  array<string, mixed>  $metadata
      */
-    public function register(
-        string $name,
-        string $filename,
-        string|ManifestSchema $schema,
-        ?string $description = null,
-        array $metadata = [],
-    ): self {
-        $this->registry->register(
-            name: $name,
-            filename: $filename,
-            schema: $schema,
-            description: $description,
-            metadata: $metadata,
-        );
+    public function register(ManifestDefinition $definition): self
+    {
+        $this->registry->register($definition);
 
         return $this;
     }

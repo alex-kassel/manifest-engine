@@ -433,8 +433,8 @@ class ManifestTest extends TestCase
         };
 
         $result = $manager
-            ->register('one', 'one.json', $schema)
-            ->register('two', 'two.json', $schema);
+            ->register(new ManifestDefinition('one', 'one.json', $schema))
+            ->register(new ManifestDefinition('two', 'two.json', $schema));
 
         $this->assertSame($manager, $result);
         $this->assertTrue($manager->has('one'));

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AlexKassel\ManifestEngine\Tests;
 
+use AlexKassel\ManifestEngine\DTOs\ManifestDefinition;
 use AlexKassel\ManifestEngine\ManifestManager;
 use AlexKassel\ManifestEngine\Schemas\BaseSchema;
 use AlexKassel\ManifestEngine\Services\ManifestInspectionService;
@@ -50,7 +51,7 @@ class ManifestInspectionServiceTest extends TestCase
             }
         };
 
-        $this->manager->registry()->register('sample', 'sample.json', $schema, 'Sample Manifest');
+        $this->manager->registry()->register(new ManifestDefinition('sample', 'sample.json', $schema, 'Sample Manifest'));
 
         // Before file creation
         $reports = $this->service->getStatusReports($this->tempDir);
@@ -78,7 +79,7 @@ class ManifestInspectionServiceTest extends TestCase
             }
         };
 
-        $this->manager->registry()->register('metrics', 'metrics.json', $schema);
+        $this->manager->registry()->register(new ManifestDefinition('metrics', 'metrics.json', $schema));
 
         // File is missing
         $reports = $this->service->validateAll('metrics', $this->tempDir);
