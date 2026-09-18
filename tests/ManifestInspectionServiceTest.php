@@ -28,7 +28,7 @@ class ManifestInspectionServiceTest extends TestCase
         $this->files->ensureDirectoryExists($this->tempDir);
 
         $this->manager = app(ManifestManager::class);
-        $this->manager->registry()->clear();
+        $this->manager->registry->clear();
 
         $this->service = new ManifestInspectionService($this->manager, $this->files);
     }
@@ -51,7 +51,7 @@ class ManifestInspectionServiceTest extends TestCase
             }
         };
 
-        $this->manager->registry()->register(new ManifestDefinition('sample', 'sample.json', $schema, 'Sample Manifest'));
+        $this->manager->registry->register(new ManifestDefinition('sample', 'sample.json', $schema, 'Sample Manifest'));
 
         // Before file creation
         $reports = $this->service->getStatusReports($this->tempDir);
@@ -60,7 +60,7 @@ class ManifestInspectionServiceTest extends TestCase
         $this->assertNull($reports['sample']->humanSize);
 
         // After file creation
-        $manifest = $this->manager->get('sample', $this->tempDir);
+        $manifest = $this->manager->open("{$this->tempDir}/sample.json", $schema);
         $manifest->init();
 
         $refreshed = $this->service->getStatusReports($this->tempDir);
@@ -79,7 +79,7 @@ class ManifestInspectionServiceTest extends TestCase
             }
         };
 
-        $this->manager->registry()->register(new ManifestDefinition('metrics', 'metrics.json', $schema));
+        $this->manager->registry->register(new ManifestDefinition('metrics', 'metrics.json', $schema));
 
         // File is missing
         $reports = $this->service->validateAll('metrics', $this->tempDir);
@@ -87,7 +87,7 @@ class ManifestInspectionServiceTest extends TestCase
         $this->assertFalse($reports['metrics']->isValid);
 
         // File is initialized and valid
-        $manifest = $this->manager->get('metrics', $this->tempDir);
+        $manifest = $this->manager->open("{$this->tempDir}/metrics.json", $schema);
         $manifest->init();
 
         $validReports = $this->service->validateAll('metrics', $this->tempDir);

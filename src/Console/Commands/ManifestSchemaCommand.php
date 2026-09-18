@@ -38,7 +38,7 @@ class ManifestSchemaCommand extends Command
      */
     protected function registeredNames(): array
     {
-        return array_keys($this->manager->registry()->all());
+        return $this->manager->registry->names();
     }
 
     /**
@@ -81,7 +81,7 @@ class ManifestSchemaCommand extends Command
             return empty($this->registeredNames()) ? self::SUCCESS : self::FAILURE;
         }
 
-        $def = $this->manager->registry()->get($name);
+        $def = $this->manager->registry->get($name);
 
         if ($def === null) {
             $this->error("No manifest registered with alias [{$name}].");

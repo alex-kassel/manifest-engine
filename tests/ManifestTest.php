@@ -11,6 +11,7 @@ use AlexKassel\ManifestEngine\Exceptions\ManifestLockTimeoutException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestNotFoundException;
 use AlexKassel\ManifestEngine\Manifest;
 use AlexKassel\ManifestEngine\ManifestManager;
+use AlexKassel\ManifestEngine\ManifestRegistry;
 use AlexKassel\ManifestEngine\Schemas\BaseSchema;
 use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Filesystem\Filesystem;
@@ -421,23 +422,36 @@ class ManifestTest extends TestCase
         $this->assertSame(99, $manifest->get('version'));
     }
 
-    public function test_manifest_manager_allows_fluent_registration_chaining(): void
+    public function test_manifest_manager_opens_and_retrieves_registered_manifests(): void
     {
-        $manager = new ManifestManager($this->files);
+        $registry = new ManifestRegistry;
+        $manager = new ManifestManager($registry);
         $schema = new class extends BaseSchema
         {
             public function defaults(): array
             {
-                return [];
+                return ['app' => 'Test'];
             }
         };
 
-        $result = $manager
-            ->register(new ManifestDefinition('one', 'one.json', $schema))
-            ->register(new ManifestDefinition('two', 'two.json', $schema));
+        $this->assertSame($registry, $manager->registry);
 
-        $this->assertSame($manager, $result);
-        $this->assertTrue($manager->has('one'));
-        $this->assertTrue($manager->has('two'));
+        $path = $this->tempDir.'/custom.json';
+        $manifest = $manager->open($path, $schema);
+        $this->assertSame($path, $manifest->path);
+
+        $registry->register(new ManifestDefinition('app', 'app.json', $schema));
+        $retrieved = $manager->get('app');
+        $this->assertSame(base_path('app.json'), $retrieved->path);
+    }
+
+    public function test_manifest_manager_throws_not_found_exception_for_unregistered_manifest(): void
+    {
+        $manager = new ManifestManager(new ManifestRegistry);
+
+        $this->expectException(ManifestNotFoundException::class);
+        $this->expectExceptionMessage('No manifest registered with alias [missing].');
+
+        $manager->get('missing');
     }
 }

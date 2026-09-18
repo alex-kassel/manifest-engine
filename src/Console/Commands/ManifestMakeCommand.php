@@ -37,7 +37,7 @@ class ManifestMakeCommand extends Command
      */
     protected function registeredNames(): array
     {
-        return array_keys($this->manager->registry()->all());
+        return $this->manager->registry->names();
     }
 
     /**
@@ -45,7 +45,7 @@ class ManifestMakeCommand extends Command
      */
     public function handle(): int
     {
-        $registry = $this->manager->registry();
+        $registry = $this->manager->registry;
         $targetArgument = $this->argument('name');
 
         if (! is_string($targetArgument) || trim($targetArgument) === '') {

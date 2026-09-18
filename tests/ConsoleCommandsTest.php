@@ -37,7 +37,7 @@ class ConsoleCommandsTest extends TestCase
         /** @var ManifestManager $manager */
         $manager = app(ManifestManager::class);
         /** @var ManifestRegistry $registry */
-        $registry = $manager->registry();
+        $registry = $manager->registry;
         $registry->clear();
 
         $schema = new class extends BaseSchema
@@ -55,7 +55,7 @@ class ConsoleCommandsTest extends TestCase
             ->assertFailed();
 
         // Initialize file with valid defaults
-        $manifest = $manager->get('service', $this->tempDir);
+        $manifest = $manager->open("{$this->tempDir}/service.json", $schema);
         $manifest->init();
 
         $this->artisan("manifest:validate service --base-path={$this->tempDir}")
@@ -72,7 +72,7 @@ class ConsoleCommandsTest extends TestCase
     {
         /** @var ManifestManager $manager */
         $manager = app(ManifestManager::class);
-        $registry = $manager->registry();
+        $registry = $manager->registry;
         $registry->clear();
 
         $schema = new class extends BaseSchema
@@ -111,7 +111,7 @@ class ConsoleCommandsTest extends TestCase
     {
         /** @var ManifestManager $manager */
         $manager = app(ManifestManager::class);
-        $registry = $manager->registry();
+        $registry = $manager->registry;
         $registry->clear();
 
         $schema = new class extends BaseSchema
@@ -151,14 +151,14 @@ class ConsoleCommandsTest extends TestCase
     {
         /** @var ManifestManager $manager */
         $manager = app(ManifestManager::class);
-        $manager->registry()->clear();
+        $manager->registry->clear();
 
         // Empty registry scenario
         $this->artisan('manifest:schema', ['--no-interaction' => true])
             ->assertSuccessful();
 
         // Registered manifests scenario with missing argument
-        $manager->registry()->register(new ManifestDefinition('test_alias', 'test.json', new class extends BaseSchema
+        $manager->registry->register(new ManifestDefinition('test_alias', 'test.json', new class extends BaseSchema
         {
             public function defaults(): array
             {
@@ -175,7 +175,7 @@ class ConsoleCommandsTest extends TestCase
     {
         /** @var ManifestManager $manager */
         $manager = app(ManifestManager::class);
-        $manager->registry()->clear();
+        $manager->registry->clear();
 
         // Non-interactive without argument should not crash Symfony console
         $this->artisan('manifest:make', ['--no-interaction' => true])
@@ -194,7 +194,7 @@ class ConsoleCommandsTest extends TestCase
     {
         /** @var ManifestManager $manager */
         $manager = app(ManifestManager::class);
-        $manager->registry()->clear();
+        $manager->registry->clear();
 
         $schema = new class extends BaseSchema
         {
@@ -204,7 +204,7 @@ class ConsoleCommandsTest extends TestCase
             }
         };
 
-        $manager->registry()->register(new ManifestDefinition('force_test', 'force_test.json', $schema));
+        $manager->registry->register(new ManifestDefinition('force_test', 'force_test.json', $schema));
         $manifest = $manager->get('force_test');
 
         // Create initial
@@ -229,7 +229,7 @@ class ConsoleCommandsTest extends TestCase
     {
         /** @var ManifestManager $manager */
         $manager = app(ManifestManager::class);
-        $manager->registry()->clear();
+        $manager->registry->clear();
 
         $this->artisan('manifest:status')
             ->expectsOutputToContain('No manifest definitions are registered in this application.')
@@ -243,7 +243,7 @@ class ConsoleCommandsTest extends TestCase
             }
         };
 
-        $manager->registry()->register(new ManifestDefinition('app_status', 'app_status.json', $schema, description: 'Test desc'));
+        $manager->registry->register(new ManifestDefinition('app_status', 'app_status.json', $schema, description: 'Test desc'));
 
         $this->artisan('manifest:status')
             ->assertSuccessful();
@@ -253,7 +253,7 @@ class ConsoleCommandsTest extends TestCase
     {
         /** @var ManifestManager $manager */
         $manager = app(ManifestManager::class);
-        $manager->registry()->clear();
+        $manager->registry->clear();
 
         $schema = new class extends BaseSchema
         {
@@ -263,7 +263,7 @@ class ConsoleCommandsTest extends TestCase
             }
         };
 
-        $manager->registry()->register(new ManifestDefinition('custom_status', 'custom.json', $schema));
+        $manager->registry->register(new ManifestDefinition('custom_status', 'custom.json', $schema));
 
         $this->files->put("{$this->tempDir}/custom.json", json_encode(['status' => 'ok']));
 

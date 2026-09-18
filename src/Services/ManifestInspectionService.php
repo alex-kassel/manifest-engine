@@ -27,7 +27,7 @@ class ManifestInspectionService
      */
     public function getStatusReports(?string $basePath = null): array
     {
-        $manifests = $this->manager->registry()->all();
+        $manifests = $this->manager->registry->all();
         $rootPath = $basePath ?? (function_exists('base_path') ? base_path() : (string) (getcwd() ?: '.'));
         $reports = [];
 
@@ -55,7 +55,7 @@ class ManifestInspectionService
     }
 
     /**
-     * Validate registered manifests against their schemas and return report objects.
+     * Validate all or a specific registered manifest against its schema.
      *
      * @return array<string, ManifestValidationReport>
      *
@@ -63,7 +63,7 @@ class ManifestInspectionService
      */
     public function validateAll(?string $targetName = null, ?string $basePath = null): array
     {
-        $registry = $this->manager->registry();
+        $registry = $this->manager->registry;
 
         if (is_string($targetName) && trim($targetName) !== '') {
             $definition = $registry->get($targetName);
@@ -79,7 +79,7 @@ class ManifestInspectionService
 
         foreach ($manifests as $name => $def) {
             try {
-                $manifest = $this->manager->get($name, $basePath);
+                $manifest = $this->manager->open($def->fullPath($basePath), $def->resolveSchema());
 
                 if (! $manifest->exists()) {
                     $reports[$name] = new ManifestValidationReport(
