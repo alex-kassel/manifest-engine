@@ -422,7 +422,7 @@ class ManifestTest extends TestCase
         $this->assertSame(99, $manifest->get('version'));
     }
 
-    public function test_manifest_manager_opens_and_retrieves_registered_manifests(): void
+    public function test_manifest_manager_fluent_register_and_universal_open(): void
     {
         $registry = new ManifestRegistry;
         $manager = new ManifestManager($registry);
@@ -436,22 +436,22 @@ class ManifestTest extends TestCase
 
         $this->assertSame($registry, $manager->registry);
 
+        // Fluent registration chaining
+        $chainResult = $manager
+            ->register(new ManifestDefinition('app', 'app.json', $schema))
+            ->register(new ManifestDefinition('db', 'db.json', $schema));
+
+        $this->assertSame($manager, $chainResult);
+        $this->assertTrue($registry->has('app'));
+        $this->assertTrue($registry->has('db'));
+
+        // Universal open: by registered alias
+        $appManifest = $manager->open('app');
+        $this->assertSame(base_path('app.json'), $appManifest->path);
+
+        // Universal open: by arbitrary file path
         $path = $this->tempDir.'/custom.json';
-        $manifest = $manager->open($path, $schema);
-        $this->assertSame($path, $manifest->path);
-
-        $registry->register(new ManifestDefinition('app', 'app.json', $schema));
-        $retrieved = $manager->get('app');
-        $this->assertSame(base_path('app.json'), $retrieved->path);
-    }
-
-    public function test_manifest_manager_throws_not_found_exception_for_unregistered_manifest(): void
-    {
-        $manager = new ManifestManager(new ManifestRegistry);
-
-        $this->expectException(ManifestNotFoundException::class);
-        $this->expectExceptionMessage('No manifest registered with alias [missing].');
-
-        $manager->get('missing');
+        $customManifest = $manager->open($path, $schema);
+        $this->assertSame($path, $customManifest->path);
     }
 }

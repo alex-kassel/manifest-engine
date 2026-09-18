@@ -124,16 +124,22 @@ class ConsoleCommandsTest extends TestCase
 
         $registry->register(new ManifestDefinition('scaffold', 'scaffold.json', $schema, description: 'Scaffold demo'));
 
-        $this->artisan('manifest:make scaffold')
-            ->assertSuccessful();
+        $scaffoldPath = base_path('scaffold.json');
+        if ($this->files->exists($scaffoldPath)) {
+            $this->files->delete($scaffoldPath);
+        }
 
-        $manifest = $manager->get('scaffold');
-        $this->assertTrue($manifest->exists());
-        $this->assertSame(['name' => 'Scaffolded', 'active' => true], $manifest->all());
+        try {
+            $this->artisan('manifest:make scaffold')
+                ->assertSuccessful();
 
-        // Clean up
-        if ($this->files->exists($manifest->path)) {
-            $this->files->delete($manifest->path);
+            $manifest = $manager->open('scaffold');
+            $this->assertTrue($manifest->exists());
+            $this->assertSame(['name' => 'Scaffolded', 'active' => true], $manifest->all());
+        } finally {
+            if ($this->files->exists($scaffoldPath)) {
+                $this->files->delete($scaffoldPath);
+            }
         }
     }
 
@@ -205,7 +211,7 @@ class ConsoleCommandsTest extends TestCase
         };
 
         $manager->registry->register(new ManifestDefinition('force_test', 'force_test.json', $schema));
-        $manifest = $manager->get('force_test');
+        $manifest = $manager->open('force_test');
 
         // Create initial
         $this->files->put($manifest->path, json_encode(['v' => 1]));

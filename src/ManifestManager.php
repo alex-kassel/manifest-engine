@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace AlexKassel\ManifestEngine;
 
 use AlexKassel\ManifestEngine\Contracts\ManifestSchema;
-use AlexKassel\ManifestEngine\Exceptions\ManifestNotFoundException;
+use AlexKassel\ManifestEngine\DTOs\ManifestDefinition;
 
 class ManifestManager
 {
@@ -14,29 +14,30 @@ class ManifestManager
     ) {}
 
     /**
-     * Open a manifest document handler for given file path and optional schema.
+     * Register a manifest definition and return self for method chaining.
      */
-    public function open(string $path, ?ManifestSchema $schema = null): Manifest
+    public function register(ManifestDefinition $definition): self
     {
-        return new Manifest(
-            path: $path,
-            schema: $schema,
-        );
+        $this->registry->register($definition);
+
+        return $this;
     }
 
     /**
-     * Retrieve and open a registered manifest by its alias name.
-     *
-     * @throws ManifestNotFoundException
+     * Open a manifest document handler for a registered alias or file path.
      */
-    public function get(string $name): Manifest
+    public function open(string $target, ?ManifestSchema $schema = null): Manifest
     {
-        $definition = $this->registry->get($name);
-
-        if ($definition === null) {
-            throw new ManifestNotFoundException("No manifest registered with alias [{$name}].");
+        if ($definition = $this->registry->get($target)) {
+            return new Manifest(
+                path: $definition->fullPath(),
+                schema: $schema ?? $definition->resolveSchema(),
+            );
         }
 
-        return $this->open($definition->fullPath(), $definition->resolveSchema());
+        return new Manifest(
+            path: $target,
+            schema: $schema,
+        );
     }
 }
