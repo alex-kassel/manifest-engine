@@ -21,7 +21,6 @@ use Illuminate\Support\Facades\Cache;
 use InvalidArgumentException;
 use JsonException;
 use JsonSerializable;
-use Throwable;
 
 /**
  * @implements ArrayAccess<string, mixed>

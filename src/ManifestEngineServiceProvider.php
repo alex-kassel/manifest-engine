@@ -8,38 +8,19 @@ use AlexKassel\ManifestEngine\Console\Commands\ManifestMakeCommand;
 use AlexKassel\ManifestEngine\Console\Commands\ManifestSchemaCommand;
 use AlexKassel\ManifestEngine\Console\Commands\ManifestStatusCommand;
 use AlexKassel\ManifestEngine\Console\Commands\ManifestValidateCommand;
-use Illuminate\Filesystem\Filesystem;
+use AlexKassel\ManifestEngine\Services\ManifestInspectionService;
 use Illuminate\Support\ServiceProvider;
 
 class ManifestEngineServiceProvider extends ServiceProvider
 {
-    public const FACADE_ACCESSOR = 'manifest.engine';
-
     /**
      * Register any application services.
      */
     public function register(): void
     {
-        $this->app->singleton(ManifestRegistry::class, function () {
-            return new ManifestRegistry;
-        });
-
-        $this->app->singleton(ManifestManager::class, function ($app) {
-            return new ManifestManager(
-                files: $app->make(Filesystem::class),
-                registry: $app->make(ManifestRegistry::class),
-                basePath: function_exists('base_path') ? base_path() : null,
-            );
-        });
-
-        $this->app->singleton(Services\ManifestInspectionService::class, function ($app) {
-            return new Services\ManifestInspectionService(
-                manager: $app->make(ManifestManager::class),
-                files: $app->make(Filesystem::class),
-            );
-        });
-
-        $this->app->alias(ManifestManager::class, self::FACADE_ACCESSOR);
+        $this->app->singleton(ManifestRegistry::class);
+        $this->app->singleton(ManifestManager::class);
+        $this->app->singleton(ManifestInspectionService::class);
     }
 
     /**

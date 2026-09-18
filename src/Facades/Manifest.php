@@ -23,10 +23,8 @@ use Illuminate\Support\Facades\Facade;
  */
 class Manifest extends Facade
 {
-    public const FACADE_ACCESSOR = 'manifest.engine';
-
     protected static function getFacadeAccessor(): string
     {
-        return self::FACADE_ACCESSOR;
+        return ManifestManager::class;
     }
 }

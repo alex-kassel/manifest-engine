@@ -15,7 +15,6 @@ class ManifestInspectionService
 {
     public const DATE_FORMAT = 'Y-m-d H:i:s';
 
-
     public function __construct(
         protected readonly ManifestManager $manager,
         protected readonly Filesystem $files = new Filesystem,

@@ -10,6 +10,7 @@ use AlexKassel\ManifestEngine\Exceptions\ManifestException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestLockTimeoutException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestNotFoundException;
 use AlexKassel\ManifestEngine\Manifest;
+use AlexKassel\ManifestEngine\ManifestManager;
 use AlexKassel\ManifestEngine\Schemas\BaseSchema;
 use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Filesystem\Filesystem;
@@ -422,7 +423,7 @@ class ManifestTest extends TestCase
 
     public function test_manifest_manager_allows_fluent_registration_chaining(): void
     {
-        $manager = new \AlexKassel\ManifestEngine\ManifestManager($this->files);
+        $manager = new ManifestManager($this->files);
         $schema = new class extends BaseSchema
         {
             public function defaults(): array
