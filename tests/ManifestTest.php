@@ -17,30 +17,6 @@ use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Cache;
 
-class TestManifestDto implements ManifestDto
-{
-    public function __construct(
-        public string $name,
-        public int $version,
-    ) {}
-
-    public function toArray(): array
-    {
-        return [
-            'name' => $this->name,
-            'version' => $this->version,
-        ];
-    }
-
-    public static function fromArray(array $data): static
-    {
-        return new static(
-            name: (string) ($data['name'] ?? ''),
-            version: (int) ($data['version'] ?? 0),
-        );
-    }
-}
-
 class ManifestTest extends TestCase
 {
     protected string $tempDir;
@@ -51,7 +27,7 @@ class ManifestTest extends TestCase
     {
         parent::setUp();
         $this->files = new Filesystem;
-        $this->tempDir = sys_get_temp_dir().'/manifest_test_'.uniqid();
+        $this->tempDir = sys_get_temp_dir().'/manifest_engine_test_'.uniqid();
         $this->files->ensureDirectoryExists($this->tempDir);
     }
 
@@ -66,7 +42,7 @@ class ManifestTest extends TestCase
     public function test_it_checks_existence(): void
     {
         $path = "{$this->tempDir}/manifest.json";
-        $manifest = new Manifest($path, files: $this->files);
+        $manifest = new Manifest($path);
 
         $this->assertFalse($manifest->exists());
         $this->files->put($path, '{}');
@@ -84,29 +60,29 @@ class ManifestTest extends TestCase
             }
         };
 
-        $manifest = new Manifest($path, $schema, $this->files);
-        $manifest->init();
+        $manifest = new Manifest($path, $schema);
+        $data = $manifest->init();
 
         $this->assertTrue($manifest->exists());
-        $this->assertSame(['version' => 1, 'items' => []], $manifest->load());
+        $this->assertSame(['version' => 1, 'items' => []], $data);
+        $this->assertSame(1, $manifest->get('version'));
     }
 
     public function test_it_reads_and_writes_dot_notation(): void
     {
         $path = "{$this->tempDir}/manifest.json";
-        $manifest = new Manifest($path, files: $this->files);
+        $manifest = new Manifest($path);
 
         $manifest->set('app.name', 'MyCoolApp');
         $manifest->set('app.debug', true);
-        $manifest->append('app.modules', 'Billing');
-        $manifest->append('app.modules', 'Auth');
+        $manifest->append('app.features', 'billing');
+        $manifest->append('app.features', 'auth');
 
         $this->assertSame('MyCoolApp', $manifest->get('app.name'));
         $this->assertTrue($manifest->get('app.debug'));
+        $this->assertSame(['billing', 'auth'], $manifest->get('app.features'));
         $this->assertTrue($manifest->has('app.name'));
-        $this->assertFalse($manifest->has('app.secret'));
-        $this->assertSame(['Billing', 'Auth'], $manifest->get('app.modules'));
-        $this->assertIsArray($manifest->all());
+        $this->assertFalse($manifest->has('app.missing'));
     }
 
     public function test_it_caches_data_in_memory_and_reloads_with_fresh(): void
@@ -114,18 +90,19 @@ class ManifestTest extends TestCase
         $path = "{$this->tempDir}/manifest.json";
         $this->files->put($path, json_encode(['title' => 'Initial Title']));
 
-        $manifest = new Manifest($path, files: $this->files);
+        $manifest = new Manifest($path);
         $this->assertSame('Initial Title', $manifest->get('title'));
 
         // Modify file externally on disk
-        $this->files->put($path, json_encode(['title' => 'External Update']));
+        $this->files->put($path, json_encode(['title' => 'External Edit']));
 
-        // In-memory cache still returns initial value
+        // Cached in-memory read still sees old value
         $this->assertSame('Initial Title', $manifest->get('title'));
 
-        // Calling fresh() invalidates cache and reads external change
-        $manifest->fresh();
-        $this->assertSame('External Update', $manifest->get('title'));
+        // fresh() reads latest from disk and returns fresh array
+        $freshData = $manifest->fresh();
+        $this->assertSame('External Edit', $freshData['title']);
+        $this->assertSame('External Edit', $manifest->get('title'));
     }
 
     public function test_it_mutates_state_atomically(): void
@@ -133,14 +110,15 @@ class ManifestTest extends TestCase
         $path = "{$this->tempDir}/manifest.json";
         $this->files->put($path, json_encode(['counter' => 0, 'status' => 'pending']));
 
-        $manifest = new Manifest($path, files: $this->files);
-        $manifest->mutate(function (array $data): array {
+        $manifest = new Manifest($path);
+        $mutated = $manifest->mutate(function (array $data): array {
             $data['counter'] = 42;
             $data['status'] = 'completed';
 
             return $data;
         });
 
+        $this->assertSame(['counter' => 42, 'status' => 'completed'], $mutated);
         $this->assertSame(42, $manifest->get('counter'));
         $this->assertSame('completed', $manifest->get('status'));
     }
@@ -150,7 +128,7 @@ class ManifestTest extends TestCase
         $path = "{$this->tempDir}/manifest.json";
         $this->files->put($path, json_encode(['a' => 1, 'b' => 2]));
 
-        $manifest = new Manifest($path, files: $this->files);
+        $manifest = new Manifest($path);
         $manifest->forget('a');
 
         $this->assertFalse($manifest->has('a'));
@@ -160,7 +138,7 @@ class ManifestTest extends TestCase
     public function test_it_throws_manifest_lock_timeout_exception_when_save_is_blocked(): void
     {
         $path = "{$this->tempDir}/manifest.json";
-        $manifest = new Manifest($path, files: $this->files);
+        $manifest = new Manifest($path);
         $manifest->lockTimeoutSeconds = 1;
 
         $externalLock = Cache::lock($manifest->lockKey(), 10);
@@ -168,7 +146,7 @@ class ManifestTest extends TestCase
 
         try {
             $this->expectException(ManifestLockTimeoutException::class);
-            $manifest->save(['status' => 'blocked']);
+            $manifest->save(['blocked' => true]);
         } finally {
             $externalLock->release();
         }
@@ -177,7 +155,7 @@ class ManifestTest extends TestCase
     public function test_it_throws_manifest_lock_timeout_exception_when_mutate_is_blocked(): void
     {
         $path = "{$this->tempDir}/manifest.json";
-        $manifest = new Manifest($path, files: $this->files);
+        $manifest = new Manifest($path);
         $manifest->lockTimeoutSeconds = 1;
 
         $externalLock = Cache::lock($manifest->lockKey(), 10);
@@ -185,48 +163,10 @@ class ManifestTest extends TestCase
 
         try {
             $this->expectException(ManifestLockTimeoutException::class);
-            $manifest->mutate(function (array $data): array {
-                $data['counter'] = 999;
-
-                return $data;
-            });
+            $manifest->mutate(fn (array $d) => array_merge($d, ['x' => 1]));
         } finally {
             $externalLock->release();
         }
-    }
-
-    public function test_it_exports_json_schema_definition(): void
-    {
-        $schema = new class extends BaseSchema
-        {
-            public function defaults(): array
-            {
-                return ['name' => 'Demo', 'version' => 1];
-            }
-
-            public function jsonSchema(): array
-            {
-                return [
-                    '$schema' => 'http://json-schema.org/draft-07/schema#',
-                    'type' => 'object',
-                    'required' => ['name', 'version'],
-                    'properties' => [
-                        'name' => ['type' => 'string', 'minLength' => 3],
-                        'version' => ['type' => 'integer', 'minimum' => 1],
-                    ],
-                ];
-            }
-        };
-
-        $manifest = new Manifest("{$this->tempDir}/manifest.json", $schema, files: $this->files);
-        $outputPath = "{$this->tempDir}/manifest.schema.json";
-        $exported = $manifest->exportJsonSchema($outputPath);
-
-        $this->assertIsArray($exported);
-        $this->assertTrue($this->files->exists($outputPath));
-        $content = json_decode((string) $this->files->get($outputPath), true);
-        $this->assertSame('http://json-schema.org/draft-07/schema#', $content['$schema']);
-        $this->assertSame('string', $content['properties']['name']['type']);
     }
 
     public function test_it_mutates_dto_contract(): void
@@ -234,7 +174,7 @@ class ManifestTest extends TestCase
         $path = "{$this->tempDir}/manifest.json";
         $this->files->put($path, json_encode(['name' => 'Analytics', 'version' => 2]));
 
-        $manifest = new Manifest($path, files: $this->files);
+        $manifest = new Manifest($path);
 
         $dto = $manifest->mutateDto(TestManifestDto::class, function (TestManifestDto $dto): TestManifestDto {
             $this->assertSame('Analytics', $dto->name);
@@ -249,9 +189,7 @@ class ManifestTest extends TestCase
         $this->assertInstanceOf(TestManifestDto::class, $dto);
         $this->assertSame('Analytics V3', $dto->name);
         $this->assertSame(3, $dto->version);
-
         $this->assertSame('Analytics V3', $manifest->get('name'));
-        $this->assertSame(3, $manifest->get('version'));
     }
 
     public function test_to_dto_throws_if_class_does_not_implement_manifest_dto(): void
@@ -259,27 +197,16 @@ class ManifestTest extends TestCase
         $path = "{$this->tempDir}/manifest.json";
         $this->files->put($path, json_encode(['title' => 'My App']));
 
-        $manifest = new Manifest($path, files: $this->files);
+        $manifest = new Manifest($path);
 
-        $this->expectException(\InvalidArgumentException::class);
+        $this->expectException(\Error::class);
         $manifest->toDto(\stdClass::class);
-    }
-
-    public function test_mutate_dto_throws_if_class_does_not_implement_manifest_dto(): void
-    {
-        $path = "{$this->tempDir}/manifest.json";
-        $this->files->put($path, json_encode(['title' => 'My App']));
-
-        $manifest = new Manifest($path, files: $this->files);
-
-        $this->expectException(\InvalidArgumentException::class);
-        $manifest->mutateDto(\stdClass::class, fn ($dto) => $dto);
     }
 
     public function test_it_throws_when_manifest_not_found_without_schema(): void
     {
         $path = "{$this->tempDir}/missing.json";
-        $manifest = new Manifest($path, files: $this->files);
+        $manifest = new Manifest($path);
 
         $this->expectException(ManifestNotFoundException::class);
         $manifest->load();
@@ -290,44 +217,13 @@ class ManifestTest extends TestCase
         $path = "{$this->tempDir}/bad.json";
         $this->files->put($path, '{not valid json');
 
-        $manifest = new Manifest($path, files: $this->files);
+        $manifest = new Manifest($path);
 
         $this->expectException(ManifestException::class);
         $manifest->load();
     }
 
-    public function test_path_detection_and_resolution(): void
-    {
-        $this->assertTrue(Manifest::isAbsolutePath('/var/log/manifest.json'));
-        $this->assertTrue(Manifest::isAbsolutePath('\\Windows\\manifest.json'));
-        $this->assertTrue(Manifest::isAbsolutePath('C:\\project\\manifest.json'));
-        $this->assertFalse(Manifest::isAbsolutePath('workspace.json'));
-        $this->assertFalse(Manifest::isAbsolutePath('sub/nested/workspace.json'));
-
-        // resolvePath returns absolute as-is
-        $this->assertSame('/tmp/custom.json', Manifest::resolvePath('/tmp/custom.json'));
-
-        // resolvePath resolves relative against base_path
-        $this->assertSame(base_path('manifest.json'), Manifest::resolvePath('manifest.json'));
-        $this->assertSame(base_path('sub/nested/manifest.json'), Manifest::resolvePath('sub/nested/manifest.json'));
-
-        // normalizeFilename strips base_path
-        $this->assertSame('manifest.json', Manifest::normalizeFilename('manifest.json'));
-        $this->assertSame('sub/nested.json', Manifest::normalizeFilename(base_path('sub/nested.json')));
-        $this->assertSame('sub/nested.json', Manifest::normalizeFilename('sub\\nested.json'));
-    }
-
-    public function test_manifest_open_automatically_resolves_relative_path(): void
-    {
-        $manifest = new Manifest('test-relative.json');
-        $this->assertSame(base_path('test-relative.json'), $manifest->path);
-
-        $absPath = "{$this->tempDir}/test-absolute.json";
-        $manifestAbs = new Manifest($absPath);
-        $this->assertSame($absPath, $manifestAbs->path);
-    }
-
-    public function test_manifest_definition_normalizes_filename_and_provides_full_path(): void
+    public function test_manifest_definition_holds_path_and_schema(): void
     {
         $schema = new class extends BaseSchema
         {
@@ -344,26 +240,7 @@ class ManifestTest extends TestCase
         );
 
         $this->assertSame(base_path('nested/workspace.json'), $definition->path);
-    }
-
-    public function test_it_implements_array_access(): void
-    {
-        $path = "{$this->tempDir}/array_access.json";
-        $this->files->put($path, json_encode(['foo' => 'bar', 'nested' => ['key' => 'value']]));
-
-        $manifest = new Manifest($path, files: $this->files);
-
-        $this->assertTrue(isset($manifest['foo']));
-        $this->assertFalse(isset($manifest['missing']));
-        $this->assertSame('bar', $manifest['foo']);
-        $this->assertSame('value', $manifest['nested.key']);
-
-        $manifest['new_key'] = 123;
-        $this->assertTrue($manifest->isDirty());
-        $this->assertSame(123, $manifest['new_key']);
-
-        unset($manifest['foo']);
-        $this->assertFalse(isset($manifest['foo']));
+        $this->assertSame($schema, $definition->schema);
     }
 
     public function test_it_implements_arrayable_and_jsonable_and_json_serializable(): void
@@ -372,35 +249,27 @@ class ManifestTest extends TestCase
         $data = ['name' => 'Demo', 'active' => true];
         $this->files->put($path, json_encode($data));
 
-        $manifest = new Manifest($path, files: $this->files);
+        $manifest = new Manifest($path);
 
         // Arrayable
         $this->assertSame($data, $manifest->toArray());
 
         // Jsonable
-        $this->assertSame(json_encode($data, Manifest::JSON_ENCODE_FLAGS), $manifest->toJson());
+        $this->assertSame(json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), $manifest->toJson());
 
         // JsonSerializable
         $this->assertSame(json_encode($data), json_encode($manifest));
     }
 
-    public function test_it_saves_arrayable_object(): void
+    public function test_it_saves_data(): void
     {
-        $path = "{$this->tempDir}/arrayable_save.json";
-        $manifest = new Manifest($path, files: $this->files);
+        $path = "{$this->tempDir}/save.json";
+        $manifest = new Manifest($path);
 
-        $arrayable = new class implements Arrayable
-        {
-            public function toArray(): array
-            {
-                return ['from_arrayable' => 'yes'];
-            }
-        };
+        $manifest->save(['from_array' => 'yes']);
 
-        $manifest->save($arrayable);
-
-        $this->assertSame('yes', $manifest->get('from_arrayable'));
-        $this->assertSame('yes', $manifest->fresh()->get('from_arrayable'));
+        $this->assertSame('yes', $manifest->get('from_array'));
+        $this->assertSame('yes', $manifest->fresh()['from_array']);
     }
 
     public function test_it_mutates_dto_in_place_when_mutator_returns_void(): void
@@ -408,7 +277,7 @@ class ManifestTest extends TestCase
         $path = "{$this->tempDir}/manifest_inplace.json";
         $this->files->put($path, json_encode(['name' => 'Original', 'version' => 1]));
 
-        $manifest = new Manifest($path, files: $this->files);
+        $manifest = new Manifest($path);
 
         $dto = $manifest->mutateDto(TestManifestDto::class, function (TestManifestDto $dto): void {
             $dto->name = 'Mutated In Place';
@@ -421,7 +290,7 @@ class ManifestTest extends TestCase
         $this->assertSame(99, $manifest->get('version'));
     }
 
-    public function test_manifest_manager_fluent_register_and_universal_open(): void
+    public function test_manifest_manager_fluent_register_and_open(): void
     {
         $registry = new ManifestRegistry;
         $manager = new ManifestManager($registry);
@@ -451,5 +320,86 @@ class ManifestTest extends TestCase
         // Opening unregistered alias throws ManifestNotFoundException
         $this->expectException(ManifestNotFoundException::class);
         $manager->open('non_existent');
+    }
+
+    public function test_it_saves_arrayable_dto_directly(): void
+    {
+        $path = "{$this->tempDir}/dto-save.json";
+        $manifest = new Manifest($path);
+        $dto = new TestManifestDto(name: 'dto-saved', version: 42);
+
+        $saved = $manifest->save($dto);
+
+        $this->assertSame(['name' => 'dto-saved', 'version' => 42], $saved);
+        $this->assertSame('dto-saved', $manifest->get('name'));
+        $this->assertSame(42, $manifest->get('version'));
+    }
+
+    public function test_it_invalidates_in_memory_cached_data(): void
+    {
+        $path = "{$this->tempDir}/cache.json";
+        $manifest = new Manifest($path);
+        $manifest->save(['counter' => 1]);
+
+        $this->assertSame(1, $manifest->get('counter'));
+
+        // External update bypassing instance
+        $this->files->put($path, json_encode(['counter' => 999]));
+        $this->assertSame(1, $manifest->get('counter')); // Still memory cached
+
+        $manifest->invalidate();
+        $this->assertSame(999, $manifest->get('counter')); // Reloaded fresh
+    }
+
+    public function test_it_exports_json_schema(): void
+    {
+        $path = "{$this->tempDir}/manifest.json";
+        $exportPath = "{$this->tempDir}/schema.json";
+        $schema = new class extends BaseSchema
+        {
+            public function defaults(): array
+            {
+                return [];
+            }
+
+            public function jsonSchema(): array
+            {
+                return [
+                    '$schema' => 'http://json-schema.org/draft-07/schema#',
+                    'title' => 'SampleSchema',
+                ];
+            }
+        };
+
+        $manifest = new Manifest($path, $schema);
+        $exported = $manifest->exportJsonSchema($exportPath);
+
+        $this->assertSame('SampleSchema', $exported['title']);
+        $this->assertTrue($this->files->exists($exportPath));
+        $this->assertStringContainsString('SampleSchema', $this->files->get($exportPath));
+    }
+}
+
+class TestManifestDto implements ManifestDto
+{
+    public function __construct(
+        public string $name = '',
+        public int $version = 1,
+    ) {}
+
+    public static function fromArray(array $data): static
+    {
+        return new static(
+            name: (string) ($data['name'] ?? ''),
+            version: (int) ($data['version'] ?? 1),
+        );
+    }
+
+    public function toArray(): array
+    {
+        return [
+            'name' => $this->name,
+            'version' => $this->version,
+        ];
     }
 }

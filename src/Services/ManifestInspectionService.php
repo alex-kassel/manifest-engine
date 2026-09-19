@@ -101,7 +101,7 @@ class ManifestInspectionService
                     continue;
                 }
 
-                $manifest->load(forceFresh: true);
+                $manifest->fresh();
 
                 $reports[$name] = new ManifestValidationReport(
                     name: $name,

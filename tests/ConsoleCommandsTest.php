@@ -225,7 +225,7 @@ class ConsoleCommandsTest extends TestCase
         $this->artisan('manifest:make force_test --force')
             ->assertSuccessful();
 
-        $this->assertSame(['v' => 2], $manifest->fresh()->all());
+        $this->assertSame(['v' => 2], $manifest->fresh());
 
         if ($this->files->exists($manifest->path)) {
             $this->files->delete($manifest->path);

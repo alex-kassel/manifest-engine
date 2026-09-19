@@ -9,109 +9,44 @@ use AlexKassel\ManifestEngine\Contracts\ManifestSchema;
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestLockTimeoutException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestNotFoundException;
-use ArrayAccess;
 use Closure;
-use Illuminate\Container\Container;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Contracts\Support\Jsonable;
-use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Cache;
-use InvalidArgumentException;
-use JsonException;
+use Illuminate\Support\Facades\File;
 use JsonSerializable;
 
-/**
- * @implements ArrayAccess<string, mixed>
- */
-class Manifest implements Arrayable, ArrayAccess, Jsonable, JsonSerializable
+class Manifest implements Arrayable, Jsonable, JsonSerializable
 {
-    public const JSON_ENCODE_FLAGS = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE;
-
-    /**
-     * In-memory cache of loaded manifest data.
-     *
-     * @var array<string, mixed>|null
-     */
     protected ?array $data = null;
-
-    /**
-     * Indicates whether in-memory data has unpersisted changes.
-     */
-    protected bool $isDirty = false;
 
     public int $lockTimeoutSeconds = 10;
 
     public int $lockTtlSeconds = 30;
 
-    public readonly string $path;
-
-    public readonly ?ManifestSchema $schema;
-
     public function __construct(
-        string $path,
-        ?ManifestSchema $schema = null,
-        protected ?Filesystem $files = null,
+        public readonly string $path,
+        public ?ManifestSchema $schema = null,
     ) {
-        $this->path = self::resolvePath($path);
-        $this->files ??= app(Filesystem::class);
-        $this->schema = $schema ?? $this->resolveSchema();
+        $this->schema ??= $this->resolveSchema();
     }
 
     /**
-     * Resolve the schema for this manifest from the application registry.
-     */
-    protected function resolveSchema(): ?ManifestSchema
-    {
-        if (function_exists('app') && app()->bound(ManifestRegistry::class)) {
-            return app(ManifestRegistry::class)->findByPath($this->path)?->schema;
-        }
-
-        return null;
-    }
-
-    /**
-     * Resolve unique lock key for this manifest file.
-     */
-    public function lockKey(): string
-    {
-        return 'manifest:'.sha1($this->canonicalPath());
-    }
-
-    /**
-     * Execute an operation under atomic lock protection.
-     *
-     * @template T
-     *
-     * @param  Closure(): T  $operation
-     * @return T
-     *
-     * @throws ManifestLockTimeoutException
-     */
-    protected function withLock(Closure $operation): mixed
-    {
-        if (class_exists(Container::class)) {
-            $container = Container::getInstance();
-            if ($container !== null && $container->bound('cache')) {
-                try {
-                    return Cache::lock($this->lockKey(), $this->lockTtlSeconds)
-                        ->block($this->lockTimeoutSeconds, $operation);
-                } catch (LockTimeoutException $e) {
-                    throw new ManifestLockTimeoutException($this->path, $this->lockTimeoutSeconds, $e);
-                }
-            }
-        }
-
-        return $operation();
-    }
-
-    /**
-     * Check if the manifest file exists on disk.
+     * Determine if the manifest file exists on disk.
      */
     public function exists(): bool
     {
-        return $this->files->exists($this->path);
+        return File::exists($this->path);
+    }
+
+    /**
+     * Resolve the unique lock key for this manifest file.
+     */
+    public function lockKey(): string
+    {
+        return 'manifest:'.sha1($this->path);
     }
 
     /**
@@ -119,217 +54,94 @@ class Manifest implements Arrayable, ArrayAccess, Jsonable, JsonSerializable
      */
     public function hash(string $algorithm = 'sha1'): ?string
     {
-        if (! $this->exists()) {
-            return null;
-        }
-
-        $hash = $this->files->hash($this->path, $algorithm);
-
-        return $hash !== false ? $hash : null;
+        return $this->exists() ? (File::hash($this->path, $algorithm) ?: null) : null;
     }
 
     /**
-     * Load existing manifest data, or return schema defaults / empty array if not found.
+     * Load manifest data from disk or fallback to schema defaults.
      *
      * @return array<string, mixed>
+     *
+     * @throws ManifestNotFoundException
      */
-    protected function loadOrDefault(): array
+    public function load(): array
     {
+        if ($this->data !== null) {
+            return $this->data;
+        }
+
+        if (! $this->exists()) {
+            return $this->data = $this->schema?->defaults() ?? throw new ManifestNotFoundException($this->path);
+        }
+
         try {
-            return $this->load();
-        } catch (ManifestNotFoundException) {
-            return $this->schema !== null ? $this->schema->defaults() : [];
+            return $this->data = File::json($this->path, flags: JSON_THROW_ON_ERROR, lock: true);
+        } catch (\JsonException $e) {
+            throw new ManifestException("Malformed JSON in manifest [{$this->path}]: {$e->getMessage()}", 0, $e);
         }
     }
 
     /**
      * Initialize the manifest file with default schema state if it doesn't exist.
+     *
+     * @return array<string, mixed>
      */
-    public function init(): self
+    public function init(): array
     {
-        if (! $this->exists()) {
-            $this->save($this->loadOrDefault());
-        }
-
-        return $this;
+        return ! $this->exists()
+            ? $this->mutate(fn () => $this->schema?->defaults() ?? [])
+            : $this->load();
     }
 
     /**
-     * Determine if in-memory data has unpersisted changes.
+     * Save raw data or Arrayable directly into the manifest file under atomic lock.
+     *
+     * @param  array<string, mixed>|Arrayable<string, mixed>  $data
+     * @return array<string, mixed>
      */
-    public function isDirty(): bool
+    public function save(array|Arrayable $data): array
     {
-        return $this->isDirty;
+        $payload = $data instanceof Arrayable ? $data->toArray() : $data;
+
+        return $this->mutate(static fn (): array => $payload);
     }
 
     /**
-     * Invalidate in-memory cache and re-read fresh data from disk.
-     */
-    public function fresh(): self
-    {
-        $this->data = null;
-        $this->isDirty = false;
-        $this->load(forceFresh: true);
-
-        return $this;
-    }
-
-    /**
-     * Alias for fresh().
-     */
-    public function reload(): self
-    {
-        return $this->fresh();
-    }
-
-    /**
-     * Invalidate in-memory cache without eagerly reloading from disk.
+     * Invalidate in-memory cached data.
      */
     public function invalidate(): self
     {
         $this->data = null;
-        $this->isDirty = false;
 
         return $this;
     }
 
     /**
-     * Load manifest content as an array with shared lock protection.
+     * Export the JSON schema specification, optionally saving to disk.
      *
-     * @return array<string, mixed>
-     *
-     * @throws ManifestNotFoundException
-     * @throws ManifestException
-     */
-    public function load(bool $forceFresh = false): array
-    {
-        if (! $forceFresh && $this->data !== null) {
-            return $this->data;
-        }
-
-        if (! $this->exists()) {
-            if ($this->schema !== null) {
-                $this->isDirty = false;
-                $this->data = $this->schema->defaults();
-
-                return $this->data;
-            }
-
-            throw new ManifestNotFoundException($this->path);
-        }
-
-        try {
-            /** @var array<string, mixed> $data */
-            $data = $this->files->json($this->path, flags: JSON_THROW_ON_ERROR, lock: true);
-        } catch (JsonException $e) {
-            throw new ManifestException("Malformed JSON in manifest [{$this->path}]: {$e->getMessage()}", 0, $e);
-        }
-
-        $this->isDirty = false;
-        $this->data = $data;
-
-        return $this->data;
-    }
-
-    /**
-     * Save data directly into manifest file atomically.
-     *
-     * @param  array<string, mixed>|Arrayable|null  $data
+     * @return array<string, mixed>|null
      *
      * @throws ManifestException
      */
-    public function save(array|Arrayable|null $data = null): self
+    public function exportJsonSchema(?string $outputPath = null): ?array
     {
-        $payload = match (true) {
-            $data instanceof Arrayable => $data->toArray(),
-            is_array($data) => $data,
-            default => $this->data ?? $this->loadOrDefault(),
-        };
-
-        $this->mutate(static fn (array $current): array => $payload);
-
-        return $this;
-    }
-
-    /**
-     * Mutate manifest data inside an atomic lock transaction.
-     *
-     * @param  callable(array<string, mixed>): array<string, mixed>  $callback
-     * @return array<string, mixed>
-     *
-     * @throws ManifestException
-     */
-    public function mutate(callable $callback): array
-    {
-        return $this->withLock(function () use ($callback): array {
-            $currentData = [];
-
-            if ($this->exists()) {
-                try {
-                    /** @var array<string, mixed> $currentData */
-                    $currentData = $this->files->json($this->path, flags: JSON_THROW_ON_ERROR, lock: true);
-                } catch (JsonException $e) {
-                    throw new ManifestException("Malformed JSON in manifest [{$this->path}]: {$e->getMessage()}", 0, $e);
-                }
-            } elseif ($this->schema !== null) {
-                $currentData = $this->schema->defaults();
-            }
-
-            $before = $currentData;
-            $mutated = $callback($currentData);
-
-            if (! is_array($mutated)) {
-                throw new ManifestException('Mutation callback must return an array.');
-            }
-
-            $json = json_encode($mutated, self::JSON_ENCODE_FLAGS);
-            if ($json === false) {
-                throw new ManifestException("Failed to serialize manifest JSON for [{$this->path}].");
-            }
-
-            $this->files->ensureDirectoryExists(dirname($this->path));
-            $this->files->replace($this->path, $json."\n");
-
-            $this->data = $mutated;
-            $this->isDirty = false;
-
-            return $mutated;
-        });
-    }
-
-    /**
-     * Mutate manifest data using a typed DTO inside an atomic lock transaction.
-     *
-     * @template T of ManifestDto
-     *
-     * @param  class-string<T>  $dtoClass
-     * @param  Closure(T): (T|void)  $mutator
-     * @return T
-     *
-     * @throws ManifestException
-     * @throws InvalidArgumentException
-     */
-    public function mutateDto(string $dtoClass, Closure $mutator): ManifestDto
-    {
-        if (! is_subclass_of($dtoClass, ManifestDto::class)) {
-            throw new InvalidArgumentException("Class [{$dtoClass}] must implement ".ManifestDto::class);
+        if ($this->schema === null) {
+            return null;
         }
 
-        $resultDto = null;
+        $jsonSchema = $this->schema->jsonSchema();
 
-        $this->mutate(function (array $currentData) use ($dtoClass, $mutator, &$resultDto): array {
-            $dto = $dtoClass::fromArray($currentData);
+        if ($outputPath !== null) {
+            $encoded = json_encode($jsonSchema, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            if ($encoded === false) {
+                throw new ManifestException('Failed to serialize JSON Schema for export.');
+            }
 
-            $mutated = $mutator($dto);
-            $finalDto = $mutated instanceof ManifestDto ? $mutated : $dto;
+            File::ensureDirectoryExists(dirname($outputPath));
+            File::replace($outputPath, $encoded."\n");
+        }
 
-            $resultDto = $finalDto;
-
-            return $finalDto->toArray();
-        });
-
-        /** @var T $resultDto */
-        return $resultDto;
+        return $jsonSchema;
     }
 
     /**
@@ -343,22 +155,51 @@ class Manifest implements Arrayable, ArrayAccess, Jsonable, JsonSerializable
     }
 
     /**
-     * Hydrate the manifest data into a typed DTO object.
+     * Invalidate in-memory cache and re-read fresh data from disk.
      *
-     * @template T of ManifestDto
-     *
-     * @param  class-string<T>  $dtoClass
-     * @return T
-     *
-     * @throws InvalidArgumentException
+     * @return array<string, mixed>
      */
-    public function toDto(string $dtoClass): ManifestDto
+    public function fresh(): array
     {
-        if (! is_subclass_of($dtoClass, ManifestDto::class)) {
-            throw new InvalidArgumentException("Class [{$dtoClass}] must implement ".ManifestDto::class);
-        }
+        $this->data = null;
 
-        return $dtoClass::fromArray($this->all());
+        return $this->load();
+    }
+
+    /**
+     * Mutate manifest data inside an atomic lock transaction and persist to disk.
+     *
+     * @param  callable(array<string, mixed>): array<string, mixed>  $callback
+     * @return array<string, mixed>
+     *
+     * @throws ManifestLockTimeoutException
+     * @throws ManifestException
+     */
+    public function mutate(callable $callback): array
+    {
+        try {
+            return Cache::lock($this->lockKey(), $this->lockTtlSeconds)->block($this->lockTimeoutSeconds, function () use ($callback): array {
+                try {
+                    $current = $this->exists()
+                        ? File::json($this->path, flags: JSON_THROW_ON_ERROR, lock: true)
+                        : ($this->schema?->defaults() ?? []);
+                } catch (\JsonException $e) {
+                    throw new ManifestException("Malformed JSON in manifest [{$this->path}]: {$e->getMessage()}", 0, $e);
+                }
+
+                $mutated = $callback($current);
+
+                File::ensureDirectoryExists(dirname($this->path));
+                File::replace(
+                    $this->path,
+                    json_encode($mutated, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)."\n"
+                );
+
+                return $this->data = $mutated;
+            });
+        } catch (LockTimeoutException $e) {
+            throw new ManifestLockTimeoutException($this->path, $this->lockTimeoutSeconds, $e);
+        }
     }
 
     /**
@@ -378,112 +219,88 @@ class Manifest implements Arrayable, ArrayAccess, Jsonable, JsonSerializable
     }
 
     /**
-     * Set a value in the manifest using dot-notation.
-     */
-    public function set(string $key, mixed $value): self
-    {
-        $data = $this->loadOrDefault();
-
-        data_set($data, $key, $value);
-        $this->data = $data;
-        $this->isDirty = true;
-
-        return $this;
-    }
-
-    /**
-     * Append a value to an array at given key.
-     */
-    public function append(string $key, mixed $value): self
-    {
-        $data = $this->loadOrDefault();
-
-        $current = data_get($data, $key, []);
-        if (! is_array($current)) {
-            $current = [$current];
-        }
-
-        $current[] = $value;
-        data_set($data, $key, $current);
-        $this->data = $data;
-        $this->isDirty = true;
-
-        return $this;
-    }
-
-    /**
-     * Forget/remove a nested key from the manifest.
-     */
-    public function forget(string $key): self
-    {
-        $data = $this->loadOrDefault();
-
-        Arr::forget($data, $key);
-        $this->data = $data;
-        $this->isDirty = true;
-
-        return $this;
-    }
-
-    /**
-     * Export the schema's JSON Schema to a file or return as an array.
+     * Set a value using dot-notation and return the mutated manifest data.
      *
-     * @return array<string, mixed>|null
-     *
-     * @throws ManifestException
+     * @return array<string, mixed>
      */
-    public function exportJsonSchema(?string $outputPath = null): ?array
+    public function set(string $key, mixed $value): array
     {
-        if ($this->schema === null) {
-            return null;
-        }
+        return $this->mutate(function (array $data) use ($key, $value): array {
+            data_set($data, $key, $value);
 
-        $jsonSchema = $this->schema->jsonSchema();
-        if ($jsonSchema === null) {
-            return null;
-        }
-
-        if ($outputPath !== null) {
-            $encoded = json_encode($jsonSchema, self::JSON_ENCODE_FLAGS);
-            if ($encoded === false) {
-                throw new ManifestException('Failed to serialize JSON Schema for export.');
-            }
-
-            $this->files->ensureDirectoryExists(dirname($outputPath));
-            $this->files->replace($outputPath, $encoded."\n");
-        }
-
-        return $jsonSchema;
+            return $data;
+        });
     }
 
     /**
-     * Resolve canonical path for unique lock identification.
+     * Append a value to an array at given key and return the mutated manifest data.
+     *
+     * @return array<string, mixed>
      */
-    protected function canonicalPath(): string
+    public function append(string $key, mixed $value): array
     {
-        $realPath = realpath($this->path);
-        if ($realPath !== false) {
-            return $realPath;
-        }
-
-        $dirname = dirname($this->path);
-        $realDir = realpath($dirname);
-        if ($realDir !== false) {
-            return rtrim($realDir, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.basename($this->path);
-        }
-
-        $base = function_exists('base_path') ? base_path() : (string) (getcwd() ?: '.');
-        if (! self::isAbsolutePath($this->path)) {
-            $combined = rtrim($base, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.$this->path;
-            $realCombinedDir = realpath(dirname($combined));
-            if ($realCombinedDir !== false) {
-                return rtrim($realCombinedDir, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.basename($combined);
+        return $this->mutate(function (array $data) use ($key, $value): array {
+            $current = data_get($data, $key, []);
+            if (! is_array($current)) {
+                $current = [$current];
             }
+            $current[] = $value;
+            data_set($data, $key, $current);
 
-            return $combined;
-        }
+            return $data;
+        });
+    }
 
-        return $this->path;
+    /**
+     * Forget a key using dot-notation and return the mutated manifest data.
+     *
+     * @return array<string, mixed>
+     */
+    public function forget(string $key): array
+    {
+        return $this->mutate(function (array $data) use ($key): array {
+            Arr::forget($data, $key);
+
+            return $data;
+        });
+    }
+
+    /**
+     * Hydrate the manifest data into a typed DTO object.
+     *
+     * @template T of ManifestDto
+     *
+     * @param  class-string<T>  $dtoClass
+     * @return T
+     */
+    public function toDto(string $dtoClass): ManifestDto
+    {
+        return $dtoClass::fromArray($this->load());
+    }
+
+    /**
+     * Mutate manifest data using a typed DTO inside an atomic lock transaction.
+     *
+     * @template T of ManifestDto
+     *
+     * @param  class-string<T>  $dtoClass
+     * @param  Closure(T): (T|void)  $mutator
+     * @return T
+     */
+    public function mutateDto(string $dtoClass, Closure $mutator): ManifestDto
+    {
+        $resultDto = null;
+
+        $this->mutate(function (array $current) use ($dtoClass, $mutator, &$resultDto): array {
+            $dto = $dtoClass::fromArray($current);
+            $mutated = $mutator($dto);
+            $resultDto = $mutated instanceof ManifestDto ? $mutated : $dto;
+
+            return $resultDto->toArray();
+        });
+
+        /** @var T $resultDto */
+        return $resultDto;
     }
 
     /**
@@ -493,26 +310,19 @@ class Manifest implements Arrayable, ArrayAccess, Jsonable, JsonSerializable
      */
     public function toArray(): array
     {
-        return $this->all();
+        return $this->load();
     }
 
     /**
      * Convert the object to its JSON representation.
-     *
-     * @param  int  $options
-     *
-     * @throws ManifestException
      */
     public function toJson($options = 0): string
     {
-        $flags = $options === 0 ? self::JSON_ENCODE_FLAGS : $options;
-        $json = json_encode($this->all(), $flags);
+        $flags = $options === 0
+            ? JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+            : $options;
 
-        if ($json === false) {
-            throw new ManifestException("Failed to encode manifest JSON for [{$this->path}].");
-        }
-
-        return $json;
+        return json_encode($this->load(), $flags);
     }
 
     /**
@@ -522,92 +332,14 @@ class Manifest implements Arrayable, ArrayAccess, Jsonable, JsonSerializable
      */
     public function jsonSerialize(): mixed
     {
-        return $this->all();
+        return $this->load();
     }
 
     /**
-     * Determine if an offset exists.
+     * Resolve the schema for this manifest from the application registry.
      */
-    public function offsetExists(mixed $offset): bool
+    protected function resolveSchema(): ?ManifestSchema
     {
-        return $this->has((string) $offset);
-    }
-
-    /**
-     * Get the value at a given offset.
-     */
-    public function offsetGet(mixed $offset): mixed
-    {
-        return $this->get((string) $offset);
-    }
-
-    /**
-     * Set the value at a given offset.
-     */
-    public function offsetSet(mixed $offset, mixed $value): void
-    {
-        if ($offset === null) {
-            throw new InvalidArgumentException('Cannot append to manifest without an explicit key.');
-        }
-
-        $this->set((string) $offset, $value);
-    }
-
-    /**
-     * Unset the value at a given offset.
-     */
-    public function offsetUnset(mixed $offset): void
-    {
-        $this->forget((string) $offset);
-    }
-
-    /**
-     * Determine if given path is an absolute filesystem path.
-     */
-    public static function isAbsolutePath(string $path): bool
-    {
-        return str_starts_with($path, '/')
-            || str_starts_with($path, '\\')
-            || (strlen($path) > 2 && ctype_alpha($path[0]) && $path[1] === ':');
-    }
-
-    /**
-     * Resolve a relative or absolute path to a fully-qualified absolute filesystem path.
-     */
-    public static function resolvePath(string $path, ?string $basePath = null): string
-    {
-        $trimmed = trim($path);
-        if ($trimmed === '') {
-            throw new InvalidArgumentException('Manifest path cannot be empty.');
-        }
-
-        if (self::isAbsolutePath($trimmed)) {
-            return $trimmed;
-        }
-
-        $base = $basePath ?? (function_exists('base_path') ? base_path() : (string) (getcwd() ?: '.'));
-
-        return rtrim($base, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.ltrim(str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $trimmed), DIRECTORY_SEPARATOR);
-    }
-
-    /**
-     * Normalize a path into a clean relative filename relative to project base path.
-     */
-    public static function normalizeFilename(string $path, ?string $basePath = null): string
-    {
-        $trimmed = trim($path);
-        if ($trimmed === '') {
-            return '';
-        }
-
-        $base = $basePath ?? (function_exists('base_path') ? base_path() : (string) (getcwd() ?: '.'));
-        $cleanBase = rtrim(str_replace('\\', '/', $base), '/');
-        $cleanPath = str_replace('\\', '/', $trimmed);
-
-        if (str_starts_with($cleanPath, $cleanBase)) {
-            $cleanPath = substr($cleanPath, strlen($cleanBase));
-        }
-
-        return ltrim($cleanPath, '/');
+        return app(ManifestRegistry::class)->findByPath($this->path)?->schema;
     }
 }
