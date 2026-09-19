@@ -23,7 +23,8 @@
     "require": {
         "php": "^8.2|^8.3|^8.4",
         "illuminate/support": "^11.0|^12.0|^13.0",
-        "illuminate/filesystem": "^11.0|^12.0|^13.0"
+        "illuminate/filesystem": "^11.0|^12.0|^13.0",
+        "alex-kassel/console-ux": "^0.0.1"
     },
     "autoload": {
         "psr-4": {

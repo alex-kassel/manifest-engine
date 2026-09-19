@@ -4,15 +4,15 @@ declare(strict_types=1);
 
 namespace AlexKassel\ManifestEngine\Console\Commands;
 
+use AlexKassel\ConsoleUx\Concerns\InteractsWithConsoleUx;
 use AlexKassel\ManifestEngine\Manifest;
 use AlexKassel\ManifestEngine\ManifestRegistry;
 use Illuminate\Console\Command;
 
-use function Laravel\Prompts\select;
-use function Laravel\Prompts\text;
-
 class ManifestInitCommand extends Command
 {
+    use InteractsWithConsoleUx;
+
     /**
      * The name and signature of the console command.
      *
@@ -44,36 +44,39 @@ class ManifestInitCommand extends Command
         $registeredNames = $this->registry->names();
 
         if (! is_string($targetArgument) || trim($targetArgument) === '') {
-            if ($this->input->isInteractive() && function_exists('\Laravel\Prompts\select')) {
+            if ($this->isInteractiveEnvironment()) {
                 if (! empty($registeredNames)) {
-                    $choice = select(
+                    $choice = $this->promptSelect(
                         label: 'Select a registered manifest or enter a custom path:',
                         options: array_merge($registeredNames, ['custom' => 'Custom file path...']),
                     );
 
                     $target = $choice === 'custom'
-                        ? (string) text(label: 'Enter relative file path (e.g. workspace.json):', required: true)
-                        : (string) $choice;
+                        ? $this->promptText(label: 'Enter relative file path (e.g. workspace.json):', required: true)
+                        : $choice;
                 } else {
-                    $target = (string) text(label: 'Enter the manifest alias name or file path to initialize:', required: true);
+                    $target = $this->promptText(label: 'Enter the manifest alias name or file path to initialize:', required: true);
                 }
             } else {
-                $this->error('Please specify a manifest alias name or file path to initialize.');
-                if (! empty($registeredNames)) {
-                    $this->line('<comment>Registered manifests:</comment> '.implode(', ', $registeredNames));
-                    $this->line('<comment>Usage:</comment> php artisan manifest:init <name>');
-                }
-
-                return self::FAILURE;
+                return $this->failWithGuidance(
+                    guidance: 'Please specify a manifest alias name or file path to initialize.',
+                    argument: 'name',
+                    availableOptions: $registeredNames,
+                    usageExample: 'php artisan manifest:init <name> [--force]',
+                    agentInstructions: 'Check registered manifests via manifest:status before calling manifest:init.',
+                );
             }
         } else {
             $target = trim($targetArgument);
         }
 
         if ($target === '') {
-            $this->error('Please specify a manifest alias name or file path to initialize.');
-
-            return self::FAILURE;
+            return $this->failWithGuidance(
+                guidance: 'Please specify a manifest alias name or file path to initialize.',
+                argument: 'name',
+                availableOptions: $registeredNames,
+                usageExample: 'php artisan manifest:init <name> [--force]',
+            );
         }
 
         if (str_contains($target, '..')) {
