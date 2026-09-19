@@ -18,21 +18,4 @@ final readonly class ManifestValidationReport
         public array $errors = [],
         public ?string $errorMessage = null,
     ) {}
-
-    /**
-     * Format validation error messages for display.
-     */
-    public function formattedErrors(): string
-    {
-        if (! empty($this->errors)) {
-            $lines = [];
-            foreach ($this->errors as $field => $messages) {
-                $lines[] = "{$field}: ".implode(', ', $messages);
-            }
-
-            return implode("\n", $lines);
-        }
-
-        return $this->errorMessage ?? '';
-    }
 }

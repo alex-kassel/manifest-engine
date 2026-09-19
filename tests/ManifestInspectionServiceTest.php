@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AlexKassel\ManifestEngine\Tests;
 
 use AlexKassel\ManifestEngine\DTOs\ManifestDefinition;
+use AlexKassel\ManifestEngine\DTOs\ManifestValidationReport;
 use AlexKassel\ManifestEngine\Manifest;
 use AlexKassel\ManifestEngine\ManifestManager;
 use AlexKassel\ManifestEngine\Schemas\BaseSchema;
@@ -101,12 +102,35 @@ class ManifestInspectionServiceTest extends TestCase
         $this->assertTrue($invalidReports['metrics']->exists);
         $this->assertFalse($invalidReports['metrics']->isValid);
         $this->assertNotNull($invalidReports['metrics']->errorMessage);
-        $this->assertStringContainsString('Malformed JSON', $invalidReports['metrics']->formattedErrors());
+        $this->assertStringContainsString('Malformed JSON', $this->service->formatErrors($invalidReports['metrics']));
     }
 
     public function test_format_bytes(): void
     {
         $this->assertSame('500 B', $this->service->formatBytes(500));
         $this->assertSame('1.5 KB', $this->service->formatBytes(1536));
+    }
+
+    public function test_format_errors(): void
+    {
+        $reportWithErrors = new ManifestValidationReport(
+            name: 'test',
+            filename: 'test.json',
+            path: '/path/test.json',
+            exists: true,
+            isValid: false,
+            errors: ['field' => ['error 1', 'error 2']],
+        );
+        $this->assertSame('field: error 1, error 2', $this->service->formatErrors($reportWithErrors));
+
+        $reportWithMessage = new ManifestValidationReport(
+            name: 'test',
+            filename: 'test.json',
+            path: '/path/test.json',
+            exists: true,
+            isValid: false,
+            errorMessage: 'General failure',
+        );
+        $this->assertSame('General failure', $this->service->formatErrors($reportWithMessage));
     }
 }

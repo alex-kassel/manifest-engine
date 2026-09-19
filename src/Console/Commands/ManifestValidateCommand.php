@@ -66,7 +66,7 @@ class ManifestValidateCommand extends Command
                 $rows[] = [$report->name, $report->filename, '<comment>Missing File</comment>', '—'];
                 $hasFailures = true;
             } elseif (! $report->isValid) {
-                $rows[] = [$report->name, $report->filename, '<error>✘ Invalid</error>', $report->formattedErrors()];
+                $rows[] = [$report->name, $report->filename, '<error>✘ Invalid</error>', $this->inspector->formatErrors($report)];
                 $hasFailures = true;
             } else {
                 $rows[] = [$report->name, $report->filename, '<info>✔ Valid</info>', '—'];

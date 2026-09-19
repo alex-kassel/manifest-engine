@@ -127,6 +127,23 @@ final readonly class ManifestInspectionService
     }
 
     /**
+     * Format validation error messages for display.
+     */
+    public function formatErrors(ManifestValidationReport $report): string
+    {
+        if (! empty($report->errors)) {
+            $lines = [];
+            foreach ($report->errors as $field => $messages) {
+                $lines[] = "{$field}: ".implode(', ', $messages);
+            }
+
+            return implode("\n", $lines);
+        }
+
+        return $report->errorMessage ?? '';
+    }
+
+    /**
      * Resolve target manifest path with optional custom base path override.
      */
     protected function resolvePath(string $definitionPath, ?string $basePath = null): string
