@@ -31,7 +31,7 @@ class ManifestInspectionServiceTest extends TestCase
         $this->manager = app(ManifestManager::class);
         $this->manager->registry->clear();
 
-        $this->service = new ManifestInspectionService($this->manager, $this->files);
+        $this->service = new ManifestInspectionService($this->manager);
     }
 
     protected function tearDown(): void

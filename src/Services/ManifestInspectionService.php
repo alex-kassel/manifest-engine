@@ -9,16 +9,15 @@ use AlexKassel\ManifestEngine\DTOs\ManifestValidationReport;
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
 use AlexKassel\ManifestEngine\Manifest;
 use AlexKassel\ManifestEngine\ManifestManager;
-use Illuminate\Filesystem\Filesystem;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Number;
 
-class ManifestInspectionService
+final readonly class ManifestInspectionService
 {
     public const DATE_FORMAT = 'Y-m-d H:i:s';
 
     public function __construct(
-        protected readonly ManifestManager $manager,
-        protected readonly Filesystem $files = new Filesystem,
+        public ManifestManager $manager,
     ) {}
 
     /**
@@ -29,18 +28,15 @@ class ManifestInspectionService
     public function getStatusReports(?string $basePath = null): array
     {
         $manifests = $this->manager->registry->all();
-        $rootPath = $basePath ?? (function_exists('base_path') ? base_path() : (string) (getcwd() ?: '.'));
         $reports = [];
 
         foreach ($manifests as $name => $def) {
-            $manifestPath = $basePath !== null
-                ? rtrim($basePath, '/\\').DIRECTORY_SEPARATOR.basename($def->path)
-                : $def->path;
-            $hasManifest = $this->files->exists($manifestPath);
+            $manifestPath = $this->resolvePath($def->path, $basePath);
+            $hasManifest = File::exists($manifestPath);
 
-            $size = $hasManifest ? (int) $this->files->size($manifestPath) : null;
+            $size = $hasManifest ? (int) File::size($manifestPath) : null;
             $humanSize = $size !== null ? $this->formatBytes($size) : null;
-            $lastModified = $hasManifest ? date(self::DATE_FORMAT, (int) $this->files->lastModified($manifestPath)) : null;
+            $lastModified = $hasManifest ? date(self::DATE_FORMAT, (int) File::lastModified($manifestPath)) : null;
 
             $reports[$name] = new ManifestStatusReport(
                 name: $name,
@@ -58,7 +54,7 @@ class ManifestInspectionService
     }
 
     /**
-     * Validate one or all registered manifests against their schemas.
+     * Validate one or all registered manifests for existence and valid JSON syntax.
      *
      * @return array<string, ManifestValidationReport>
      *
@@ -81,13 +77,10 @@ class ManifestInspectionService
         $reports = [];
 
         foreach ($manifests as $name => $def) {
+            $targetPath = $this->resolvePath($def->path, $basePath);
+            $manifest = new Manifest($targetPath, $def->schema);
+
             try {
-                $targetPath = $basePath !== null
-                    ? rtrim($basePath, '/\\').DIRECTORY_SEPARATOR.basename($def->path)
-                    : $def->path;
-
-                $manifest = new Manifest($targetPath, $def->schema);
-
                 if (! $manifest->exists()) {
                     $reports[$name] = new ManifestValidationReport(
                         name: $name,
@@ -131,5 +124,15 @@ class ManifestInspectionService
     public function formatBytes(int $bytes): string
     {
         return Number::fileSize($bytes, precision: $bytes < 1024 ? 0 : 1);
+    }
+
+    /**
+     * Resolve target manifest path with optional custom base path override.
+     */
+    protected function resolvePath(string $definitionPath, ?string $basePath = null): string
+    {
+        return $basePath !== null
+            ? rtrim($basePath, '/\\').DIRECTORY_SEPARATOR.basename($definitionPath)
+            : $definitionPath;
     }
 }
