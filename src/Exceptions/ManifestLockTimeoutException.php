@@ -8,12 +8,17 @@ use Throwable;
 
 class ManifestLockTimeoutException extends ManifestException
 {
-    public function __construct(string $path, int $timeoutSeconds, ?Throwable $previous = null)
-    {
+    public function __construct(
+        public readonly string $path,
+        public readonly int $timeoutSeconds,
+        ?Throwable $previous = null,
+        ?string $message = null,
+        int $code = 0,
+    ) {
         parent::__construct(
-            "Timed out after [{$timeoutSeconds}] seconds waiting for lock on manifest [{$path}].",
-            0,
-            $previous
+            $message ?? "Timed out after [{$timeoutSeconds}] seconds waiting for lock on manifest [{$path}].",
+            $code,
+            $previous,
         );
     }
 }

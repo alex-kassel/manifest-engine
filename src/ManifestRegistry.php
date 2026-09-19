@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace AlexKassel\ManifestEngine;
 
 use AlexKassel\ManifestEngine\DTOs\ManifestDefinition;
+use Illuminate\Container\Attributes\Singleton;
 
+#[Singleton]
 class ManifestRegistry
 {
     /**

@@ -131,7 +131,7 @@ class ConsoleCommandsTest extends TestCase
         }
 
         try {
-            $this->artisan('manifest:make scaffold')
+            $this->artisan('manifest:init scaffold')
                 ->assertSuccessful();
 
             $manifest = $manager->open('scaffold');
@@ -144,11 +144,11 @@ class ConsoleCommandsTest extends TestCase
         }
     }
 
-    public function test_manifest_make_command_supports_absolute_custom_path(): void
+    public function test_manifest_init_command_supports_absolute_custom_path(): void
     {
         $absolutePath = "{$this->tempDir}/absolute_custom.json";
 
-        $this->artisan("manifest:make {$absolutePath}")
+        $this->artisan("manifest:init {$absolutePath}")
             ->assertSuccessful();
 
         $this->assertTrue($this->files->exists($absolutePath));
@@ -178,26 +178,26 @@ class ConsoleCommandsTest extends TestCase
             ->assertFailed();
     }
 
-    public function test_manifest_make_command_handles_missing_argument_fail_safely(): void
+    public function test_manifest_init_command_handles_missing_argument_fail_safely(): void
     {
         /** @var ManifestManager $manager */
         $manager = app(ManifestManager::class);
         $manager->registry->clear();
 
         // Non-interactive without argument should not crash Symfony console
-        $this->artisan('manifest:make', ['--no-interaction' => true])
+        $this->artisan('manifest:init', ['--no-interaction' => true])
             ->expectsOutputToContain('Please specify a manifest alias name or file path')
             ->assertFailed();
     }
 
-    public function test_manifest_make_command_rejects_path_traversal(): void
+    public function test_manifest_init_command_rejects_path_traversal(): void
     {
-        $this->artisan('manifest:make', ['name' => '../../evil.json', '--no-interaction' => true])
+        $this->artisan('manifest:init', ['name' => '../../evil.json', '--no-interaction' => true])
             ->expectsOutputToContain('Path traversal is not allowed in manifest path.')
             ->assertFailed();
     }
 
-    public function test_manifest_make_command_force_overwrites_existing_file(): void
+    public function test_manifest_init_command_force_overwrites_existing_file(): void
     {
         /** @var ManifestManager $manager */
         $manager = app(ManifestManager::class);
@@ -218,11 +218,11 @@ class ConsoleCommandsTest extends TestCase
         $this->files->put($manifest->path, json_encode(['v' => 1]));
 
         // Fail without force
-        $this->artisan('manifest:make force_test')
+        $this->artisan('manifest:init force_test')
             ->assertFailed();
 
         // Succeed with force
-        $this->artisan('manifest:make force_test --force')
+        $this->artisan('manifest:init force_test --force')
             ->assertSuccessful();
 
         $this->assertSame(['v' => 2], $manifest->fresh());

@@ -10,10 +10,12 @@ use AlexKassel\ManifestEngine\Exceptions\ManifestException;
 use AlexKassel\ManifestEngine\Exceptions\ManifestNotFoundException;
 use AlexKassel\ManifestEngine\Manifest;
 use AlexKassel\ManifestEngine\ManifestRegistry;
+use Illuminate\Container\Attributes\Singleton;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Number;
 
+#[Singleton]
 final readonly class ManifestInspectionService
 {
     public function __construct(

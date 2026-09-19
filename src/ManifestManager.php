@@ -6,7 +6,9 @@ namespace AlexKassel\ManifestEngine;
 
 use AlexKassel\ManifestEngine\DTOs\ManifestDefinition;
 use AlexKassel\ManifestEngine\Exceptions\ManifestNotFoundException;
+use Illuminate\Container\Attributes\Singleton;
 
+#[Singleton]
 final readonly class ManifestManager
 {
     public function __construct(

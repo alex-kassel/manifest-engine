@@ -5,17 +5,20 @@ declare(strict_types=1);
 namespace AlexKassel\ManifestEngine\Console\Commands;
 
 use AlexKassel\ManifestEngine\Manifest;
-use AlexKassel\ManifestEngine\ManifestManager;
+use AlexKassel\ManifestEngine\ManifestRegistry;
 use Illuminate\Console\Command;
 
-class ManifestMakeCommand extends Command
+use function Laravel\Prompts\select;
+use function Laravel\Prompts\text;
+
+class ManifestInitCommand extends Command
 {
     /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'manifest:make
+    protected $signature = 'manifest:init
                             {name? : Manifest alias name or file path to initialize}
                             {--force : Overwrite existing file if present}';
 
@@ -27,17 +30,9 @@ class ManifestMakeCommand extends Command
     protected $description = 'Initialize and scaffold a manifest file with its schema defaults';
 
     public function __construct(
-        protected readonly ManifestManager $manager,
+        protected readonly ManifestRegistry $registry,
     ) {
         parent::__construct();
-    }
-
-    /**
-     * @return array<int, string>
-     */
-    protected function registeredNames(): array
-    {
-        return $this->manager->registry->names();
     }
 
     /**
@@ -45,28 +40,28 @@ class ManifestMakeCommand extends Command
      */
     public function handle(): int
     {
-        $registry = $this->manager->registry;
         $targetArgument = $this->argument('name');
+        $registeredNames = $this->registry->names();
 
         if (! is_string($targetArgument) || trim($targetArgument) === '') {
-            $registered = $this->registeredNames();
+            if ($this->input->isInteractive() && function_exists('\Laravel\Prompts\select')) {
+                if (! empty($registeredNames)) {
+                    $choice = select(
+                        label: 'Select a registered manifest or enter a custom path:',
+                        options: array_merge($registeredNames, ['custom' => 'Custom file path...']),
+                    );
 
-            if ($this->input->isInteractive()) {
-                if (! empty($registered)) {
-                    $choice = $this->choice('Select a registered manifest or enter a custom path:', array_merge($registered, ['[Custom file path...]']));
-
-                    if ($choice === '[Custom file path...]') {
-                        $target = (string) $this->ask('Enter relative file path (e.g. workspace.json):');
-                    } else {
-                        $target = (string) $choice;
-                    }
+                    $target = $choice === 'custom'
+                        ? (string) text(label: 'Enter relative file path (e.g. workspace.json):', required: true)
+                        : (string) $choice;
                 } else {
-                    $target = (string) $this->ask('Enter the manifest alias name or file path to initialize:');
+                    $target = (string) text(label: 'Enter the manifest alias name or file path to initialize:', required: true);
                 }
             } else {
                 $this->error('Please specify a manifest alias name or file path to initialize.');
-                if (! empty($registered)) {
-                    $this->line('<comment>Available registered manifests:</comment> '.implode(', ', $registered));
+                if (! empty($registeredNames)) {
+                    $this->line('<comment>Registered manifests:</comment> '.implode(', ', $registeredNames));
+                    $this->line('<comment>Usage:</comment> php artisan manifest:init <name>');
                 }
 
                 return self::FAILURE;
@@ -75,7 +70,7 @@ class ManifestMakeCommand extends Command
             $target = trim($targetArgument);
         }
 
-        if (trim($target) === '') {
+        if ($target === '') {
             $this->error('Please specify a manifest alias name or file path to initialize.');
 
             return self::FAILURE;
@@ -87,9 +82,17 @@ class ManifestMakeCommand extends Command
             return self::FAILURE;
         }
 
-        $manifest = $registry->has($target)
-            ? $this->manager->open($target)
-            : new Manifest(str_ends_with($target, '.json') ? $target : $target.'.json');
+        if ($this->registry->has($target)) {
+            $definition = $this->registry->get($target);
+            $manifest = new Manifest($definition->path, $definition->schema);
+        } else {
+            $path = str_ends_with($target, '.json') ? $target : "{$target}.json";
+            $absolutePath = str_starts_with($path, '/') || preg_match('/^[a-zA-Z]:[\\\\\/]/', $path)
+                ? $path
+                : (function_exists('base_path') ? base_path($path) : $path);
+
+            $manifest = new Manifest($absolutePath);
+        }
 
         if ($manifest->exists()) {
             if (! $this->option('force')) {
@@ -98,7 +101,7 @@ class ManifestMakeCommand extends Command
                 return self::FAILURE;
             }
 
-            $initialData = $manifest->schema !== null ? $manifest->schema->defaults() : [];
+            $initialData = $manifest->schema?->defaults() ?? [];
             $manifest->save($initialData);
         } else {
             $manifest->init();

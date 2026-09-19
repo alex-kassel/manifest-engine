@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace AlexKassel\ManifestEngine;
 
-use AlexKassel\ManifestEngine\Console\Commands\ManifestMakeCommand;
+use AlexKassel\ManifestEngine\Console\Commands\ManifestInitCommand;
 use AlexKassel\ManifestEngine\Console\Commands\ManifestSchemaCommand;
 use AlexKassel\ManifestEngine\Console\Commands\ManifestStatusCommand;
 use AlexKassel\ManifestEngine\Console\Commands\ManifestValidateCommand;
@@ -33,7 +33,7 @@ class ManifestEngineServiceProvider extends ServiceProvider
                 ManifestStatusCommand::class,
                 ManifestValidateCommand::class,
                 ManifestSchemaCommand::class,
-                ManifestMakeCommand::class,
+                ManifestInitCommand::class,
             ]);
         }
     }
