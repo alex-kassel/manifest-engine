@@ -7,17 +7,17 @@ namespace AlexKassel\ManifestEngine\Services;
 use AlexKassel\ManifestEngine\DTOs\ManifestStatusReport;
 use AlexKassel\ManifestEngine\DTOs\ManifestValidationReport;
 use AlexKassel\ManifestEngine\Exceptions\ManifestException;
+use AlexKassel\ManifestEngine\Exceptions\ManifestNotFoundException;
 use AlexKassel\ManifestEngine\Manifest;
-use AlexKassel\ManifestEngine\ManifestManager;
+use AlexKassel\ManifestEngine\ManifestRegistry;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Number;
 
 final readonly class ManifestInspectionService
 {
-    public const DATE_FORMAT = 'Y-m-d H:i:s';
-
     public function __construct(
-        public ManifestManager $manager,
+        public ManifestRegistry $registry,
     ) {}
 
     /**
@@ -25,28 +25,28 @@ final readonly class ManifestInspectionService
      *
      * @return array<string, ManifestStatusReport>
      */
-    public function getStatusReports(?string $basePath = null): array
+    public function getStatusReports(): array
     {
-        $manifests = $this->manager->registry->all();
         $reports = [];
 
-        foreach ($manifests as $name => $def) {
-            $manifestPath = $this->resolvePath($def->path, $basePath);
-            $hasManifest = File::exists($manifestPath);
+        foreach ($this->registry->all() as $name => $definition) {
+            $hasManifest = File::exists($definition->path);
 
-            $size = $hasManifest ? (int) File::size($manifestPath) : null;
+            $size = $hasManifest ? (int) File::size($definition->path) : null;
             $humanSize = $size !== null ? $this->formatBytes($size) : null;
-            $lastModified = $hasManifest ? date(self::DATE_FORMAT, (int) File::lastModified($manifestPath)) : null;
+            $lastModified = $hasManifest
+                ? Carbon::createFromTimestamp((int) File::lastModified($definition->path))->toDateTimeString()
+                : null;
 
             $reports[$name] = new ManifestStatusReport(
                 name: $name,
-                filename: basename($def->path),
-                path: $manifestPath,
+                filename: basename($definition->path),
+                path: $definition->path,
                 exists: $hasManifest,
                 sizeBytes: $size,
                 humanSize: $humanSize,
                 lastModified: $lastModified,
-                description: $def->description,
+                description: $definition->description,
             );
         }
 
@@ -58,33 +58,30 @@ final readonly class ManifestInspectionService
      *
      * @return array<string, ManifestValidationReport>
      *
-     * @throws ManifestException
+     * @throws ManifestNotFoundException
      */
-    public function validateAll(?string $targetName = null, ?string $basePath = null): array
+    public function validate(?string $name = null): array
     {
-        $registry = $this->manager->registry;
-
-        if (is_string($targetName) && trim($targetName) !== '') {
-            $definition = $registry->get($targetName);
+        if (is_string($name) && trim($name) !== '') {
+            $definition = $this->registry->get($name);
             if ($definition === null) {
-                throw new ManifestException("No manifest registered with alias [{$targetName}].");
+                throw new ManifestNotFoundException($name, "No manifest registered with alias [{$name}].");
             }
-            $manifests = [$targetName => $definition];
+            $manifests = [$name => $definition];
         } else {
-            $manifests = $registry->all();
+            $manifests = $this->registry->all();
         }
 
         $reports = [];
 
-        foreach ($manifests as $name => $def) {
-            $targetPath = $this->resolvePath($def->path, $basePath);
-            $manifest = new Manifest($targetPath, $def->schema);
+        foreach ($manifests as $manifestName => $definition) {
+            $manifest = new Manifest($definition->path, $definition->schema);
 
             try {
                 if (! $manifest->exists()) {
-                    $reports[$name] = new ManifestValidationReport(
-                        name: $name,
-                        filename: basename($def->path),
+                    $reports[$manifestName] = new ManifestValidationReport(
+                        name: $manifestName,
+                        filename: basename($definition->path),
                         path: $manifest->path,
                         exists: false,
                         isValid: false,
@@ -96,17 +93,17 @@ final readonly class ManifestInspectionService
 
                 $manifest->fresh();
 
-                $reports[$name] = new ManifestValidationReport(
-                    name: $name,
-                    filename: basename($def->path),
+                $reports[$manifestName] = new ManifestValidationReport(
+                    name: $manifestName,
+                    filename: basename($definition->path),
                     path: $manifest->path,
                     exists: true,
                     isValid: true,
                 );
             } catch (ManifestException $e) {
-                $reports[$name] = new ManifestValidationReport(
-                    name: $name,
-                    filename: basename($def->path),
+                $reports[$manifestName] = new ManifestValidationReport(
+                    name: $manifestName,
+                    filename: basename($definition->path),
                     path: $manifest->path,
                     exists: $manifest->exists(),
                     isValid: false,
@@ -141,15 +138,5 @@ final readonly class ManifestInspectionService
         }
 
         return $report->errorMessage ?? '';
-    }
-
-    /**
-     * Resolve target manifest path with optional custom base path override.
-     */
-    protected function resolvePath(string $definitionPath, ?string $basePath = null): string
-    {
-        return $basePath !== null
-            ? rtrim($basePath, '/\\').DIRECTORY_SEPARATOR.basename($definitionPath)
-            : $definitionPath;
     }
 }

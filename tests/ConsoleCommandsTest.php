@@ -52,20 +52,20 @@ class ConsoleCommandsTest extends TestCase
         $registry->register(new ManifestDefinition('service', "{$this->tempDir}/service.json", $schema, description: 'Service manifest'));
 
         // Missing file initially -> should fail validation
-        $this->artisan("manifest:validate service --base-path={$this->tempDir}")
+        $this->artisan('manifest:validate service')
             ->assertFailed();
 
         // Initialize file with valid defaults
         $manifest = new Manifest("{$this->tempDir}/service.json", $schema);
         $manifest->init();
 
-        $this->artisan("manifest:validate service --base-path={$this->tempDir}")
+        $this->artisan('manifest:validate service')
             ->assertSuccessful();
 
         // Corrupt with malformed JSON directly on disk
         $this->files->put($manifest->path, '{broken-json');
 
-        $this->artisan("manifest:validate service --base-path={$this->tempDir}")
+        $this->artisan('manifest:validate service')
             ->assertFailed();
     }
 
@@ -274,7 +274,7 @@ class ConsoleCommandsTest extends TestCase
 
         $this->files->put("{$this->tempDir}/custom.json", json_encode(['status' => 'ok']));
 
-        $this->artisan("manifest:status --base-path={$this->tempDir}")
+        $this->artisan('manifest:status')
             ->assertSuccessful();
     }
 }

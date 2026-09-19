@@ -33,7 +33,7 @@ final readonly class ManifestManager
         $definition = $this->registry->get($name);
 
         if ($definition === null) {
-            throw new ManifestNotFoundException("No manifest registered with alias [{$name}].");
+            throw new ManifestNotFoundException($name, "No manifest registered with alias [{$name}].");
         }
 
         return new Manifest(

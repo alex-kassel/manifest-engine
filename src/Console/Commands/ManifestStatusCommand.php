@@ -14,8 +14,7 @@ class ManifestStatusCommand extends Command
      *
      * @var string
      */
-    protected $signature = 'manifest:status
-                            {--base-path= : Optional custom root directory}';
+    protected $signature = 'manifest:status';
 
     /**
      * The console command description.
@@ -35,10 +34,7 @@ class ManifestStatusCommand extends Command
      */
     public function handle(): int
     {
-        $basePathOption = $this->option('base-path');
-        $basePath = is_string($basePathOption) && trim($basePathOption) !== '' ? trim($basePathOption) : null;
-
-        $reports = $this->inspector->getStatusReports($basePath);
+        $reports = $this->inspector->getStatusReports();
 
         if (empty($reports)) {
             $this->comment('No manifest definitions are registered in this application.');

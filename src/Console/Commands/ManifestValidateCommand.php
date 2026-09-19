@@ -16,8 +16,7 @@ class ManifestValidateCommand extends Command
      * @var string
      */
     protected $signature = 'manifest:validate
-                            {name? : Specific manifest alias to validate}
-                            {--base-path= : Optional custom root directory}';
+                            {name? : Specific manifest alias to validate}';
 
     /**
      * The console command description.
@@ -38,13 +37,10 @@ class ManifestValidateCommand extends Command
     public function handle(): int
     {
         $targetName = $this->argument('name');
-        $basePathOption = $this->option('base-path');
-        $basePath = is_string($basePathOption) && trim($basePathOption) !== '' ? $basePathOption : null;
 
         try {
-            $reports = $this->inspector->validateAll(
-                targetName: is_string($targetName) && trim($targetName) !== '' ? trim($targetName) : null,
-                basePath: $basePath,
+            $reports = $this->inspector->validate(
+                name: is_string($targetName) && trim($targetName) !== '' ? trim($targetName) : null,
             );
         } catch (ManifestException $e) {
             $this->error($e->getMessage());
